@@ -184,9 +184,13 @@ with tab2:
     st.title("Archiv & Verwaltung")
     search_q = st.text_input("Kennzeichen suchen").upper()
     results = supabase.table("protocols").select("*, vehicles(*)").order("created_at", desc=True).execute().data
+    
     for r in results:
         plate = r['vehicles']['license_plate']
         if search_q in plate:
+            # Sicherheits-Key für das Löschen dieses spezifischen Protokolls
+            confirm_key = f"del_confirm_{r['id']}"
+            
             with st.expander(f"📄 {r['created_at'][:10]} | {plate} | {r['vehicles']['brand_model']}"):
                 c_det1, c_det2 = st.columns(2)
                 with c_det1:
@@ -212,12 +216,30 @@ with tab2:
                     st.write("**FOTOS & UNTERSCHRIFT**")
                     st.image([url for url in photos.values() if url], width=120)
                 
+                st.write("---")
                 c_b1, c_b2 = st.columns(2)
+                
                 with c_b1:
                     if st.button("Bearbeiten", key=f"e_{r['id']}"):
                         st.session_state.edit_id, st.session_state.edit_data = r['id'], r
                         st.rerun()
+                
                 with c_b2:
-                    if st.button("Löschen", key=f"d_{r['id']}"):
-                        supabase.table("protocols").delete().eq("id", r['id']).execute()
-                        st.rerun()
+                    # Lösch-Logik mit Bestätigung
+                    if st.session_state.get(confirm_key, False):
+                        st.warning("⚠️ Wirklich löschen?")
+                        col_yes, col_no = st.columns(2)
+                        with col_yes:
+                            if st.button("JA, Löschen", key=f"yes_{r['id']}", type="primary"):
+                                supabase.table("protocols").delete().eq("id", r['id']).execute()
+                                del st.session_state[confirm_key]
+                                st.rerun()
+                        with col_no:
+                            if st.button("Nein, Abbrechen", key=f"no_{r['id']}"):
+                                del st.session_state[confirm_key]
+                                st.rerun()
+                    else:
+                        if st.button("Löschen", key=f"d_{r['id']}"):
+                            st.session_state[confirm_key] = True
+                            st.rerun()
+                            
