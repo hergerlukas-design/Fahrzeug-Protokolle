@@ -1,21 +1,33 @@
 import streamlit as st
+from supabase import create_client, Client
 import datetime
 
-# App Konfiguration für Mobile Optimierung
-st.set_page_config(page_title="Fahrzeug-Übergabe", page_icon="🚗")
+# --- DATENBANK VERBINDUNG ---
+# Holt sich die Daten sicher aus den Streamlit Secrets
+url: str = st.secrets["SUPABASE_URL"]
+key: str = st.secrets["SUPABASE_KEY"]
+supabase: Client = create_client(url, key)
 
+st.set_page_config(page_title="Fahrzeug-Übergabe", page_icon="🚗")
 st.title("🚗 Fahrzeug-Annahme")
 
-# --- ABSCHNITT 1: Projekt & Basisdaten ---
-st.header("1. Basisdaten")
+# --- PROJEKTE LADEN ---
+def get_projects():
+    response = supabase.table("projects").select("name").execute()
+    return [p['name'] for p in response.data]
 
-# Beispiel-Liste der Projekte (Später ziehen wir diese aus Supabase)
-projekte_liste = ["CarHandling Campus", "Überführung BMW", "-- Neues Projekt erstellen --"]
-auswahl_projekt = st.selectbox("Projekt wählen", projekte_liste)
+try:
+    vorhandene_projekte = get_projects()
+except:
+    vorhandene_projekte = ["Allgemein"]
+
+# --- 1. BASISDATEN ---
+st.header("1. Basisdaten")
+auswahl_projekt = st.selectbox("Projekt wählen", ["-- Neues Projekt erstellen --"] + vorhandene_projekte)
 
 projekt_name = ""
 if auswahl_projekt == "-- Neues Projekt erstellen --":
-    projekt_name = st.text_input("Name des neuen Projekts eingeben")
+    projekt_name = st.text_input("Name des neuen Projekts")
 else:
     projekt_name = auswahl_projekt
 
@@ -27,44 +39,62 @@ with col2:
 
 vin = st.text_input("VIN (Fahrgestellnummer)")
 
-# --- ABSCHNITT 2: Fahrzeug-Zustand ---
-st.header("2. Zustand & Zubehör")
-
+# --- 2. ZUSTAND ---
+st.header("2. Zustand")
 km_stand = st.number_input("Kilometerstand", min_value=0, step=1)
 energie = st.slider("Tank / Batterie (%)", 0, 100, 50)
 
-st.subheader("Checkliste")
-clean_floor = st.checkbox("Boden sauber (Floor)")
-clean_seats = st.checkbox("Sitze sauber (Seats)")
-ladekabel = st.checkbox("Ladekabel vorhanden")
-verbandskasten = st.checkbox("Verbandskasten vorhanden")
+# Checkliste als Dictionary (für JSON Speicherung)
+checkliste = {
+    "floor_clean": st.checkbox("Boden sauber"),
+    "seats_clean": st.checkbox("Sitze sauber"),
+    "cable": st.checkbox("Ladekabel vorhanden"),
+    "first_aid": st.checkbox("Verbandskasten")
+}
 
-# --- ABSCHNITT 3: Foto-Dokumentation (Pflicht) ---
+# --- 3. FOTOS ---
 st.header("3. Fotos (Pflicht)")
-st.info("Bitte mache Fotos von allen 4 Seiten und vom Fahrzeugschein.")
+f1 = st.camera_input("Vorne")
+f2 = st.camera_input("Hinten")
+f3 = st.camera_input("Links")
+f4 = st.camera_input("Rechts")
+f5 = st.camera_input("Fahrzeugschein")
 
-foto_vorne = st.camera_input("Foto VORNE")
-foto_hinten = st.camera_input("Foto HINTEN")
-foto_links = st.camera_input("Foto LINKS")
-foto_rechts = st.camera_input("Foto RECHTS")
-foto_schein = st.camera_input("Fahrzeugschein (Zulassung)")
-
-# --- ABSCHNITT 4: Abschluss ---
-st.header("4. Abschluss")
-bemerkung = st.text_area("Bemerkungen / Bekannte Schäden")
-
-st.write("---")
-st.write("### Unterschrift")
-st.info("Hier wird später ein Unterschriftenfeld integriert.")
-
-# Überprüfung, ob alle Pflichtfotos da sind
-pflicht_fotos_da = foto_vorne and foto_hinten and foto_links and foto_rechts and foto_schein
-
+# --- 4. SPEICHERN LOGIK ---
 if st.button("Protokoll Speichern", use_container_width=True):
-    if not pflicht_fotos_da:
-        st.error("Bitte erst alle 5 Pflichtfotos aufnehmen!")
-    elif not kennzeichen:
-        st.error("Bitte Kennzeichen angeben!")
+    if not (f1 and f2 and f3 and f4 and f5 and kennzeichen and projekt_name):
+        st.error("Bitte alle Pflichtfelder ausfüllen und Fotos machen!")
     else:
-        st.success(f"Protokoll für {kennzeichen} wurde lokal erstellt! (Anbindung an Datenbank folgt)")
-        # Hier kommt im nächsten Schritt der Code für Supabase rein
+        with st.spinner("Speichere Daten..."):
+            try:
+                # 1. Falls neues Projekt, in DB anlegen
+                if auswahl_projekt == "-- Neues Projekt erstellen --":
+                    supabase.table("projects").insert({"name": projekt_name}).execute()
+                
+                # 2. Projekt ID holen
+                proj_resp = supabase.table("projects").select("id").eq("name", projekt_name).execute()
+                proj_id = proj_resp.data[0]['id']
+
+                # 3. Fahrzeug anlegen/holen
+                veh_resp = supabase.table("vehicles").upsert({
+                    "project_id": proj_id,
+                    "license_plate": kennzeichen,
+                    "vin": vin,
+                    "brand_model": hersteller
+                }).execute()
+                veh_id = veh_resp.data[0]['id']
+
+                # 4. Protokoll speichern
+                supabase.table("protocols").insert({
+                    "vehicle_id": veh_id,
+                    "odometer": km_stand,
+                    "fuel_level": energie,
+                    "condition_data": checkliste,
+                    "remarks": st.session_state.get("remarks", "")
+                }).execute()
+
+                st.success(f"Erfolgreich gespeichert! Fahrzeug {kennzeichen} ist im System.")
+                st.balloons()
+            except Exception as e:
+                st.error(f"Fehler beim Speichern: {e}")
+                
