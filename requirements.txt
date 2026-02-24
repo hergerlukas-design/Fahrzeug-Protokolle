@@ -3,3 +3,4 @@ supabase
 streamlit-drawable-canvas
 Pillow
 fpdf2
+requests
