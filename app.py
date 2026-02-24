@@ -5,6 +5,8 @@ from PIL import Image
 import io
 import datetime
 import uuid
+import requests
+from fpdf import FPDF
 
 # --- 1. SETUP ---
 url: str = st.secrets["SUPABASE_URL"]
@@ -13,7 +15,7 @@ supabase: Client = create_client(url, key)
 
 st.set_page_config(page_title="Vehicle Protocol Pro", layout="wide", page_icon="🚗")
 
-# Navigation
+# Navigation Tabs
 tab1, tab2 = st.tabs(["📝 Protokoll erstellen / Bearbeiten", "🔍 Archiv & Verwaltung"])
 
 # --- 2. HILFSFUNKTIONEN ---
@@ -40,6 +42,52 @@ def get_projects():
         return [p['name'] for p in res.data]
     except: return []
 
+def create_pdf(data):
+    """Erstellt ein PDF-Dokument mit allen Details und Bildern"""
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("helvetica", "B", 16)
+    pdf.cell(0, 10, "Fahrzeug-Übergabeprotokoll", ln=True, align="C")
+    pdf.set_font("helvetica", "", 10)
+    pdf.cell(0, 10, f"Erstellt am: {data['created_at'][:10]}", ln=True, align="R")
+    
+    pdf.set_font("helvetica", "B", 12)
+    pdf.cell(0, 10, "1. Basisdaten", ln=True)
+    pdf.set_font("helvetica", "", 10)
+    pdf.cell(95, 8, f"Kennzeichen: {data['vehicles']['license_plate']}", border=1)
+    pdf.cell(95, 8, f"Hersteller/Modell: {data['vehicles']['brand_model']}", border=1, ln=True)
+    pdf.cell(95, 8, f"VIN: {data['vehicles']['vin']}", border=1)
+    pdf.cell(95, 8, f"Fahrer: {data['inspector_name']}", border=1, ln=True)
+    pdf.cell(95, 8, f"KM-Stand: {data['odometer']} KM", border=1)
+    pdf.cell(95, 8, f"Standort: {data['location']}", border=1, ln=True)
+    
+    pdf.ln(5)
+    pdf.set_font("helvetica", "B", 12)
+    pdf.cell(0, 10, "2. Technik & Füllstände", ln=True)
+    pdf.set_font("helvetica", "", 10)
+    pdf.cell(63, 8, f"Kraftstoff: {data['fuel_level']}%", border=1)
+    pdf.cell(63, 8, f"Batterie: {data['condition_data'].get('battery', 0)}%", border=1)
+    pdf.cell(64, 8, f"Bedingungen: {', '.join(data['condition_data'].get('conditions', []))}", border=1, ln=True)
+
+    # Bilder hinzufügen (kleine Auswahl)
+    photos = data['condition_data'].get('photos', {})
+    if photos:
+        pdf.ln(10)
+        pdf.cell(0, 10, "3. Fotos & Unterschrift", ln=True)
+        # Wir laden nur das erste Bild als Beispiel (v), um das PDF klein zu halten
+        if "vorne" in photos and photos["vorne"]:
+            try:
+                img_data = requests.get(photos["vorne"]).content
+                pdf.image(io.BytesIO(img_data), x=10, y=pdf.get_y(), w=80)
+            except: pass
+        if "signature" in photos and photos["signature"]:
+            try:
+                sig_data = requests.get(photos["signature"]).content
+                pdf.image(io.BytesIO(sig_data), x=110, y=pdf.get_y(), w=50)
+            except: pass
+            
+    return pdf.output()
+
 # --- TAB 1: PROTOKOLL ERSTELLEN & BEARBEITEN ---
 with tab1:
     is_edit = "edit_id" in st.session_state
@@ -52,7 +100,6 @@ with tab1:
     
     st.title("Fahrzeug-Übergabe")
     
-    # 1. Basisdaten
     st.header("1. Basisdaten")
     projekte = get_projects()
     default_p_index = 0
@@ -84,7 +131,6 @@ with tab1:
         standort = st.text_input("Standort", value=s_val)
         datum_zeit = st.text_input("Datum & Uhrzeit", value=datetime.datetime.now().strftime("%d.%m.%Y %H:%M"))
 
-    # 2. Sichtprüfung & Fotos
     st.header("2. Äußere Sichtprüfung")
     erschwert_val = st.session_state.edit_data['condition_data'].get('conditions', []) if is_edit else []
     erschwert = st.multiselect("Bedingungen", ["Verschmutzung", "Regen", "Dunkelheit", "Schlechtes Licht"], default=erschwert_val)
@@ -98,7 +144,6 @@ with tab1:
     f_schaden1 = st.file_uploader("Schaden Foto 1 (Optional)", type=['jpg', 'jpeg', 'png'])
     f_schaden2 = st.file_uploader("Schaden Foto 2 (Optional)", type=['jpg', 'jpeg', 'png'])
 
-    # 3. Innenraum & Zubehör
     st.header("3. Innenraum & Zubehör")
     old_cl = st.session_state.edit_data['condition_data'].get('checkliste', {}) if is_edit else {}
     c_in1, c_in2 = st.columns(2)
@@ -119,7 +164,6 @@ with tab1:
         z_reg = st.toggle("Zulassungsbescheinigung", old_cl.get('registration', True))
         z_card = st.toggle("Versicherung/Ladekarte", old_cl.get('card', True))
 
-    # 4. Betriebsstoffe
     st.header("4. Betriebsstoffe")
     f_lvl = st.session_state.edit_data['fuel_level'] if is_edit else 50
     fuel = st.slider("Kraftstoff (%)", 0, 100, f_lvl)
@@ -128,12 +172,9 @@ with tab1:
     km_val = st.session_state.edit_data['odometer'] if is_edit else 0
     km = st.number_input("Kilometerstand", min_value=0, value=km_val)
 
-    # 5. Abschluss & Unterschrift
     st.header("5. Abschluss & Unterschrift")
     bem_val = st.session_state.edit_data['remarks'] if is_edit else ""
     bemerkung = st.text_area("Bemerkungen", value=bem_val)
-    
-    st.write("Bitte hier unterschreiben:")
     canvas_result = st_canvas(fill_color="rgba(255, 165, 0, 0.3)", stroke_width=3, stroke_color="#000000", background_color="#eeeeee", height=150, key="canvas")
     sign_confirm = st.checkbox("Ich bestätige die Richtigkeit der Angaben")
 
@@ -149,17 +190,15 @@ with tab1:
                     p_id = supabase.table("projects").select("id").eq("name", p_name).execute().data[0]['id']
                     v_res = supabase.table("vehicles").upsert({"project_id": p_id, "license_plate": kennzeichen, "brand_model": hersteller, "vin": vin}, on_conflict="license_plate").execute()
                     v_id = v_res.data[0]['id']
-
                     path = f"{p_name}/{kennzeichen}"
                     urls = st.session_state.edit_data['condition_data'].get('photos', {}) if is_edit else {}
                     for key, file in [("vorne", f_v), ("hinten", f_h), ("links", f_l), ("rechts", f_r), ("schein", f_s), ("schaden1", f_schaden1), ("schaden2", f_schaden2)]:
                         if file: urls[key] = upload_photo(file, path, key)
-
                     if canvas_result.image_data is not None:
                         im = Image.fromarray(canvas_result.image_data.astype('uint8'), 'RGBA')
                         urls["signature"] = upload_photo(im, path, "sign", is_pil=True)
-
-                    proto_payload = {
+                    
+                    payload = {
                         "vehicle_id": v_id, "inspector_name": fahrer, "location": standort, "odometer": km, "fuel_level": fuel, "remarks": bemerkung,
                         "condition_data": {
                             "battery": battery, "photos": urls, "conditions": erschwert,
@@ -169,11 +208,8 @@ with tab1:
                             }
                         }
                     }
-                    if is_edit:
-                        supabase.table("protocols").update(proto_payload).eq("id", st.session_state.edit_id).execute()
-                    else:
-                        supabase.table("protocols").insert(proto_payload).execute()
-                    
+                    if is_edit: supabase.table("protocols").update(payload).eq("id", st.session_state.edit_id).execute()
+                    else: supabase.table("protocols").insert(payload).execute()
                     st.success("Erfolgreich gespeichert!")
                     if is_edit: del st.session_state["edit_id"]
                     st.rerun()
@@ -184,21 +220,18 @@ with tab2:
     st.title("Archiv & Verwaltung")
     search_q = st.text_input("Kennzeichen suchen").upper()
     results = supabase.table("protocols").select("*, vehicles(*)").order("created_at", desc=True).execute().data
-    
     for r in results:
         plate = r['vehicles']['license_plate']
         if search_q in plate:
-            # Sicherheits-Key für das Löschen dieses spezifischen Protokolls
             confirm_key = f"del_confirm_{r['id']}"
-            
             with st.expander(f"📄 {r['created_at'][:10]} | {plate} | {r['vehicles']['brand_model']}"):
-                c_det1, c_det2 = st.columns(2)
-                with c_det1:
+                col_a, col_b = st.columns(2)
+                with col_a:
                     st.write("**BASISDATEN**")
                     st.write(f"Fahrer: {r['inspector_name']} | Standort: {r['location']}")
                     st.write(f"VIN: {r['vehicles']['vin']}")
                     st.write(f"Bedingungen: {', '.join(r['condition_data'].get('conditions', []))}")
-                with c_det2:
+                with col_b:
                     st.write("**TECHNIK**")
                     st.write(f"KM: {r['odometer']} | Sprit: {r['fuel_level']}% | Akku: {r['condition_data'].get('battery')}%")
                 
@@ -212,34 +245,27 @@ with tab2:
                 st.write(f"**Bemerkungen:** {r['remarks']}")
                 photos = r['condition_data'].get('photos', {})
                 if photos:
-                    st.write("---")
                     st.write("**FOTOS & UNTERSCHRIFT**")
                     st.image([url for url in photos.values() if url], width=120)
                 
                 st.write("---")
-                c_b1, c_b2 = st.columns(2)
-                
+                c_b1, c_b2, c_b3 = st.columns(3)
                 with c_b1:
                     if st.button("Bearbeiten", key=f"e_{r['id']}"):
                         st.session_state.edit_id, st.session_state.edit_data = r['id'], r
                         st.rerun()
-                
                 with c_b2:
-                    # Lösch-Logik mit Bestätigung
+                    # PDF DOWNLOAD BUTTON
+                    pdf_file = create_pdf(r)
+                    st.download_button("⬇️ PDF Download", data=pdf_file, file_name=f"Protokoll_{plate}.pdf", mime="application/pdf", key=f"pdf_{r['id']}")
+                with c_b3:
                     if st.session_state.get(confirm_key, False):
-                        st.warning("⚠️ Wirklich löschen?")
-                        col_yes, col_no = st.columns(2)
-                        with col_yes:
-                            if st.button("JA, Löschen", key=f"yes_{r['id']}", type="primary"):
-                                supabase.table("protocols").delete().eq("id", r['id']).execute()
-                                del st.session_state[confirm_key]
-                                st.rerun()
-                        with col_no:
-                            if st.button("Nein, Abbrechen", key=f"no_{r['id']}"):
-                                del st.session_state[confirm_key]
-                                st.rerun()
+                        st.warning("Wirklich löschen?")
+                        if st.button("JA", key=f"y_{r['id']}", type="primary"):
+                            supabase.table("protocols").delete().eq("id", r['id']).execute()
+                            del st.session_state[confirm_key]; st.rerun()
+                        if st.button("NEIN", key=f"n_{r['id']}"):
+                            del st.session_state[confirm_key]; st.rerun()
                     else:
                         if st.button("Löschen", key=f"d_{r['id']}"):
-                            st.session_state[confirm_key] = True
-                            st.rerun()
-                            
+                            st.session_state[confirm_key] = True; st.rerun()
