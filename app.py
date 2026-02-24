@@ -170,7 +170,7 @@ with tab1:
         vin_val = st.session_state.edit_data['vehicles']['vin'] if is_edit else ""
         vin = st.text_input("VIN", value=vin_val)
         f_val = st.session_state.edit_data['inspector_name'] if is_edit else ""
-        fahrer = st.text_input("Fahrer", value=f_val)
+        fahrer = st.text_input("Ersteller", value=f_val)
     with col2:
         h_val = st.session_state.edit_data['vehicles']['brand_model'] if is_edit else ""
         hersteller = st.text_input("Modell", value=h_val)
@@ -186,10 +186,10 @@ with tab1:
     with c_f1:
         f_v = st.file_uploader("Vorne", type=['jpg','png'])
         f_l = st.file_uploader("Links", type=['jpg','png'])
-        f_s = st.file_uploader("Schein", type=['jpg','png'])
+        f_s = st.file_uploader("Hinten", type=['jpg','png'])
     with c_f2:
-        f_h = st.file_uploader("Hinten", type=['jpg','png'])
-        f_r = st.file_uploader("Rechts", type=['jpg','png'])
+        f_h = st.file_uploader("Rechts", type=['jpg','png'])
+        f_r = st.file_uploader("Schein", type=['jpg','png'])
 
     # NEU: Dynamisches Schadensmenü
     st.subheader("🛠️ Schäden erfassen")
@@ -219,17 +219,17 @@ with tab1:
     with c1:
         c_floor = st.toggle("Boden sauber", old_cl.get('floor', True))
         c_seats = st.toggle("Sitze sauber", old_cl.get('seats', True))
-        c_covers = st.toggle("Innenverkleidung", old_cl.get('covers', True))
-        c_instr = st.toggle("Armaturen OK", old_cl.get('instruments', True))
+        c_covers = st.toggle("Einstiege", old_cl.get('entry', True))
+        c_instr = st.toggle("Armaturen", old_cl.get('instruments', True))
         c_trunk = st.toggle("Kofferraum sauber", old_cl.get('trunk', True))
-        c_engine = st.toggle("Motorraum OK", old_cl.get('engine', True))
+        c_engine = st.toggle("Motorraum", old_cl.get('engine', True))
     with c2:
         z_aid = st.toggle("Verbandskasten", old_cl.get('aid_kit', True))
         z_tri = st.toggle("Warndreieck", old_cl.get('triangle', True))
         z_vest = st.toggle("Warnweste", old_cl.get('vest', True))
         z_cable = st.toggle("Ladekabel", old_cl.get('cable', False))
         z_reg = st.toggle("Fahrzeugschein", old_cl.get('registration', True))
-        z_card = st.toggle("Ladekarte/Versicherung", old_cl.get('card', True))
+        z_card = st.toggle("Ladekarte", old_cl.get('card', True))
 
     st.header("4. Betriebsstoffe")
     fuel = st.slider("Kraftstoff %", 0, 100, 50)
@@ -288,7 +288,7 @@ with tab2:
                 st.write("### Protokoll-Details")
                 c_arc1, c_arc2 = st.columns(2)
                 with c_arc1:
-                    st.write(f"**Fahrer:** {r['inspector_name']} | **VIN:** {r['vehicles']['vin']}")
+                    st.write(f"**Ersteller:** {r['inspector_name']} | **VIN:** {r['vehicles']['vin']}")
                     st.write(f"**Standort:** {r['location']}")
                 with c_arc2:
                     st.write(f"**KM:** {r['odometer']} | **Sprit:** {r['fuel_level']}% | **Akku:** {r['condition_data'].get('battery', 0)}%")
