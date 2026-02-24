@@ -43,16 +43,18 @@ def get_projects():
     except: return []
 
 def create_pdf(data):
-    """Erstellt ein PDF und gibt es als Bytes zurück (Behebt StreamlitAPIException)"""
+    """Erstellt ein professionelles, deutsches PDF mit allen Fotos"""
     pdf = FPDF()
     pdf.add_page()
+    
+    # Header
     pdf.set_font("helvetica", "B", 16)
     pdf.cell(0, 10, "Fahrzeug-Übergabeprotokoll", ln=True, align="C")
-    
     pdf.set_font("helvetica", "", 10)
-    pdf.cell(0, 10, f"Datum: {data['created_at'][:10]}", ln=True, align="R")
+    pdf.cell(0, 10, f"Erstellt am: {data['created_at'][:10]}", ln=True, align="R")
     
     # 1. Basisdaten
+    pdf.ln(5)
     pdf.set_font("helvetica", "B", 12)
     pdf.cell(0, 10, "1. Basisdaten", ln=True)
     pdf.set_font("helvetica", "", 10)
@@ -60,51 +62,85 @@ def create_pdf(data):
     pdf.cell(95, 8, f"Modell: {data['vehicles']['brand_model']}", border=1, ln=True)
     pdf.cell(95, 8, f"VIN: {data['vehicles']['vin']}", border=1)
     pdf.cell(95, 8, f"Fahrer: {data['inspector_name']}", border=1, ln=True)
-    pdf.cell(95, 8, f"KM-Stand: {data['odometer']}", border=1)
+    pdf.cell(95, 8, f"KM-Stand: {data['odometer']} KM", border=1)
     pdf.cell(95, 8, f"Standort: {data['location']}", border=1, ln=True)
     
-    # 2. Technik
+    # 2. Technik & Füllstände
     pdf.ln(5)
     pdf.set_font("helvetica", "B", 12)
-    pdf.cell(0, 10, "2. Füllstände & Technik", ln=True)
+    pdf.cell(0, 10, "2. Technik & Betriebsstoffe", ln=True)
     pdf.set_font("helvetica", "", 10)
-    pdf.cell(63, 8, f"Sprit: {data['fuel_level']}%", border=1)
-    pdf.cell(63, 8, f"Akku: {data['condition_data'].get('battery', 0)}%", border=1)
+    pdf.cell(63, 8, f"Kraftstoff: {data['fuel_level']}%", border=1)
+    pdf.cell(63, 8, f"Batterie: {data['condition_data'].get('battery', 0)}%", border=1)
     pdf.cell(64, 8, f"Bedingungen: {', '.join(data['condition_data'].get('conditions', []))}", border=1, ln=True)
     
-    # 3. Checkliste
+    # 3. Checkliste (Übersetzung ins Deutsche)
     pdf.ln(5)
     pdf.set_font("helvetica", "B", 12)
-    pdf.cell(0, 10, "3. Checkliste (Innen/Zubehör)", ln=True)
+    pdf.cell(0, 10, "3. Checkliste (Zustand & Zubehör)", ln=True)
     pdf.set_font("helvetica", "", 9)
+    
     cl = data['condition_data'].get('checkliste', {})
-    for item, val in cl.items():
-        status = "OK" if val else "NICHT OK / FEHLT"
-        pdf.cell(95, 7, f"{item.capitalize()}: {status}", border=1)
-        if list(cl.keys()).index(item) % 2 != 0: pdf.ln(7)
+    uebersetzung = {
+        "floor": "Boden sauber", "seats": "Sitze sauber", "covers": "Innenverkleidung",
+        "instruments": "Armaturen OK", "trunk": "Kofferraum sauber", "engine": "Motorraum OK",
+        "aid_kit": "Verbandskasten", "triangle": "Warndreieck", "vest": "Warnweste",
+        "cable": "Ladekabel", "registration": "Fahrzeugschein", "card": "Ladekarte/Versicherung"
+    }
+    
+    items = list(cl.items())
+    for i in range(0, len(items), 2):
+        k1, v1 = items[i]
+        label1 = uebersetzung.get(k1, k1)
+        status1 = "OK" if v1 else "Fehlt/Nicht OK"
+        pdf.cell(95, 7, f"{label1}: {status1}", border=1)
+        
+        if i+1 < len(items):
+            k2, v2 = items[i+1]
+            label2 = uebersetzung.get(k2, k2)
+            status2 = "OK" if v2 else "Fehlt/Nicht OK"
+            pdf.cell(95, 7, f"{label2}: {status2}", border=1, ln=True)
+        else:
+            pdf.ln(7)
 
-    # 4. Bilder & Unterschrift
+    # 4. Fotos (Rundumblick + Schäden)
     photos = data['condition_data'].get('photos', {})
     if photos:
         pdf.add_page()
         pdf.set_font("helvetica", "B", 12)
-        pdf.cell(0, 10, "4. Dokumentation & Unterschrift", ln=True)
+        pdf.cell(0, 10, "4. Fotodokumentation", ln=True)
         
-        # Pflichtfotos (Beispielhaft Vorne)
-        if photos.get("vorne"):
-            try:
-                img_data = requests.get(photos["vorne"]).content
-                pdf.image(io.BytesIO(img_data), x=10, y=30, w=80)
-                pdf.text(10, 28, "Foto Vorne")
-            except: pass
-            
-        # Unterschrift
-        if photos.get("signature"):
-            try:
-                sig_data = requests.get(photos["signature"]).content
-                pdf.image(io.BytesIO(sig_data), x=110, y=30, w=60)
-                pdf.text(110, 28, "Digitale Unterschrift")
-            except: pass
+        y_pos = 30
+        x_pos = [10, 105] # Zwei Spalten
+        col = 0
+        
+        for p_label, p_url in photos.items():
+            if p_url and p_label != "signature":
+                try:
+                    img_data = requests.get(p_url).content
+                    pdf.image(io.BytesIO(img_data), x=x_pos[col], y=y_pos, w=90)
+                    pdf.set_xy(x_pos[col], y_pos + 62)
+                    pdf.cell(90, 5, p_label.capitalize(), align="C")
+                    
+                    col += 1
+                    if col > 1:
+                        col = 0
+                        y_pos += 75
+                    
+                    if y_pos > 220: # Neue Seite wenn voll
+                        pdf.add_page()
+                        y_pos = 20
+                except: pass
+
+    # 5. Unterschrift
+    pdf.ln(20)
+    if "signature" in photos and photos["signature"]:
+        pdf.set_font("helvetica", "B", 12)
+        pdf.cell(0, 10, "5. Bestätigung & Unterschrift", ln=True)
+        try:
+            sig_data = requests.get(photos["signature"]).content
+            pdf.image(io.BytesIO(sig_data), w=60)
+        except: pass
 
     return bytes(pdf.output())
 
@@ -112,94 +148,74 @@ def create_pdf(data):
 with tab1:
     is_edit = "edit_id" in st.session_state
     if is_edit:
-        st.warning(f"⚠️ BEARBEITUNGSMODUS: {st.session_state.edit_data['vehicles']['license_plate']}")
-        if st.button("Bearbeitung abbrechen"):
+        st.warning(f"⚠️ Bearbeitungsmodus: {st.session_state.edit_data['vehicles']['license_plate']}")
+        if st.button("Abbrechen"):
             del st.session_state["edit_id"]
-            del st.session_state["edit_data"]
             st.rerun()
     
     st.title("Fahrzeug-Übergabe")
     
+    # Formular wie gewohnt (Basierend auf deinem letzten Stand)
     st.header("1. Basisdaten")
     projekte = get_projects()
-    default_p_index = 0
-    if is_edit:
-        try:
-            current_p_id = st.session_state.edit_data['vehicles']['project_id']
-            p_res = supabase.table("projects").select("name").eq("id", current_p_id).execute()
-            if p_res.data:
-                p_name_old = p_res.data[0]['name']
-                if p_name_old in projekte:
-                    default_p_index = projekte.index(p_name_old) + 1
-        except: pass
-
-    auswahl_p = st.selectbox("Projekt", ["-- Neues Projekt erstellen --"] + projekte, index=default_p_index)
-    p_name = st.text_input("Name des neuen Projekts") if auswahl_p == "-- Neues Projekt erstellen --" else auswahl_p
+    auswahl_p = st.selectbox("Projekt", ["-- Neues Projekt erstellen --"] + projekte)
+    p_name = st.text_input("Projektname") if auswahl_p == "-- Neues Projekt erstellen --" else auswahl_p
     
     col1, col2 = st.columns(2)
     with col1:
         k_val = st.session_state.edit_data['vehicles']['license_plate'] if is_edit else ""
-        kennzeichen = st.text_input("Kennzeichen", value=k_val).upper().replace(" ", "_")
+        kennzeichen = st.text_input("Kennzeichen", value=k_val).upper()
         vin_val = st.session_state.edit_data['vehicles']['vin'] if is_edit else ""
-        vin = st.text_input("VIN (Fahrgestellnummer)", value=vin_val)
+        vin = st.text_input("VIN", value=vin_val)
         f_val = st.session_state.edit_data['inspector_name'] if is_edit else ""
-        fahrer = st.text_input("Fahrer-Name", value=f_val)
+        fahrer = st.text_input("Fahrer", value=f_val)
     with col2:
         h_val = st.session_state.edit_data['vehicles']['brand_model'] if is_edit else ""
-        hersteller = st.text_input("Hersteller/Modell", value=h_val)
+        hersteller = st.text_input("Modell", value=h_val)
         s_val = st.session_state.edit_data['location'] if is_edit else ""
         standort = st.text_input("Standort", value=s_val)
-        datum_zeit = st.text_input("Datum & Uhrzeit", value=datetime.datetime.now().strftime("%d.%m.%Y %H:%M"))
+        datum_zeit = st.text_input("Datum", value=datetime.datetime.now().strftime("%d.%m.%Y %H:%M"))
 
-    st.header("2. Äußere Sichtprüfung")
-    erschwert_val = st.session_state.edit_data['condition_data'].get('conditions', []) if is_edit else []
-    erschwert = st.multiselect("Bedingungen", ["Verschmutzung", "Regen", "Dunkelheit", "Schlechtes Licht"], default=erschwert_val)
-    
-    st.subheader("Pflicht-Fotos")
-    f_v = st.file_uploader("Foto VORNE (Pflicht)", type=['jpg', 'jpeg', 'png'])
-    f_h = st.file_uploader("Foto HINTEN (Pflicht)", type=['jpg', 'jpeg', 'png'])
-    f_l = st.file_uploader("Foto LINKS (Pflicht)", type=['jpg', 'jpeg', 'png'])
-    f_r = st.file_uploader("Foto RECHTS (Pflicht)", type=['jpg', 'jpeg', 'png'])
-    f_s = st.file_uploader("Fahrzeugschein (Pflicht)", type=['jpg', 'jpeg', 'png'])
-    f_schaden1 = st.file_uploader("Schaden Foto 1 (Optional)", type=['jpg', 'jpeg', 'png'])
-    f_schaden2 = st.file_uploader("Schaden Foto 2 (Optional)", type=['jpg', 'jpeg', 'png'])
+    st.header("2. Sichtprüfung & Fotos")
+    erschwert = st.multiselect("Bedingungen", ["Verschmutzung", "Regen", "Dunkelheit", "Schlechtes Licht"])
+    f_v = st.file_uploader("Vorne", type=['jpg','png'])
+    f_h = st.file_uploader("Hinten", type=['jpg','png'])
+    f_l = st.file_uploader("Links", type=['jpg','png'])
+    f_r = st.file_uploader("Rechts", type=['jpg','png'])
+    f_s = st.file_uploader("Schein", type=['jpg','png'])
+    f_sch1 = st.file_uploader("Schaden 1", type=['jpg','png'])
+    f_sch2 = st.file_uploader("Schaden 2", type=['jpg','png'])
 
-    st.header("3. Innenraum & Zubehör")
+    st.header("3. Checkliste")
     old_cl = st.session_state.edit_data['condition_data'].get('checkliste', {}) if is_edit else {}
-    c_in1, c_in2 = st.columns(2)
-    with c_in1:
+    c1, c2 = st.columns(2)
+    with c1:
         c_floor = st.toggle("Boden sauber", old_cl.get('floor', True))
         c_seats = st.toggle("Sitze sauber", old_cl.get('seats', True))
         c_covers = st.toggle("Innenverkleidung", old_cl.get('covers', True))
         c_instr = st.toggle("Armaturen OK", old_cl.get('instruments', True))
         c_trunk = st.toggle("Kofferraum sauber", old_cl.get('trunk', True))
         c_engine = st.toggle("Motorraum OK", old_cl.get('engine', True))
-    with c_in2:
+    with c2:
         z_aid = st.toggle("Verbandskasten", old_cl.get('aid_kit', True))
         z_tri = st.toggle("Warndreieck", old_cl.get('triangle', True))
         z_vest = st.toggle("Warnweste", old_cl.get('vest', True))
         z_cable = st.toggle("Ladekabel", old_cl.get('cable', False))
-        z_reg = st.toggle("Zulassung", old_cl.get('registration', True))
-        z_card = st.toggle("Ladekarte", old_cl.get('card', True))
+        z_reg = st.toggle("Fahrzeugschein", old_cl.get('registration', True))
+        z_card = st.toggle("Ladekarte/Versicherung", old_cl.get('card', True))
 
     st.header("4. Betriebsstoffe")
-    f_lvl = st.session_state.edit_data['fuel_level'] if is_edit else 50
-    fuel = st.slider("Kraftstoff (%)", 0, 100, f_lvl)
-    batt_lvl = st.session_state.edit_data['condition_data'].get('battery', 100) if is_edit else 100
-    battery = st.slider("Batterie (%)", 0, 100, batt_lvl)
-    km_val = st.session_state.edit_data['odometer'] if is_edit else 0
-    km = st.number_input("Kilometerstand", min_value=0, value=km_val)
+    fuel = st.slider("Kraftstoff %", 0, 100, 50)
+    battery = st.slider("Batterie %", 0, 100, 100)
+    km = st.number_input("Kilometer", min_value=0)
 
-    st.header("5. Abschluss & Unterschrift")
-    bem_val = st.session_state.edit_data['remarks'] if is_edit else ""
-    bemerkung = st.text_area("Bemerkungen", value=bem_val)
-    st.write("Bitte hier unterschreiben:")
-    canvas_result = st_canvas(fill_color="rgba(255, 165, 0, 0.3)", stroke_width=3, stroke_color="#000000", background_color="#eeeeee", height=150, key="canvas")
-    sign_confirm = st.checkbox("Ich bestätige die Richtigkeit der Angaben")
+    st.header("5. Abschluss")
+    bemerkung = st.text_area("Bemerkungen")
+    canvas_result = st_canvas(fill_color="rgba(255, 165, 0, 0.3)", stroke_width=3, height=150, key="canvas")
+    confirm = st.checkbox("Ich bestätige die Angaben")
 
-    if st.button("PROTOKOLL SPEICHERN", use_container_width=True):
-        if not kennzeichen or not p_name: st.error("Kennzeichen und Projekt sind Pflicht!")
-        elif not sign_confirm: st.error("Bestätigung setzen!")
+    if st.button("SPEICHERN", use_container_width=True):
+        if not (kennzeichen and p_name and confirm): st.error("Bitte Pflichtfelder ausfüllen!")
         else:
             with st.spinner("Speichere..."):
                 try:
@@ -207,58 +223,96 @@ with tab1:
                     p_id = supabase.table("projects").select("id").eq("name", p_name).execute().data[0]['id']
                     v_res = supabase.table("vehicles").upsert({"project_id": p_id, "license_plate": kennzeichen, "brand_model": hersteller, "vin": vin}, on_conflict="license_plate").execute()
                     v_id = v_res.data[0]['id']
+                    
                     path = f"{p_name}/{kennzeichen}"
-                    urls = st.session_state.edit_data['condition_data'].get('photos', {}) if is_edit else {}
-                    for k, f in [("vorne", f_v), ("hinten", f_h), ("links", f_l), ("rechts", f_r), ("schein", f_s), ("schaden1", f_schaden1), ("schaden2", f_schaden2)]:
+                    urls = {}
+                    for k, f in [("vorne",f_v),("hinten",f_h),("links",f_l),("rechts",f_r),("schein",f_s),("schaden1",f_sch1),("schaden2",f_sch2)]:
                         if f: urls[k] = upload_photo(f, path, k)
+                    
                     if canvas_result.image_data is not None:
                         im = Image.fromarray(canvas_result.image_data.astype('uint8'), 'RGBA')
                         urls["signature"] = upload_photo(im, path, "sign", is_pil=True)
-                    
-                    payload = {"vehicle_id": v_id, "inspector_name": fahrer, "location": standort, "odometer": km, "fuel_level": fuel, "remarks": bemerkung, "condition_data": {"battery": battery, "photos": urls, "conditions": erschwert, "checkliste": {"floor": c_floor, "seats": c_seats, "covers": c_covers, "instruments": c_instr, "trunk": c_trunk, "engine": c_engine, "aid_kit": z_aid, "triangle": z_tri, "vest": z_vest, "cable": z_cable, "registration": z_reg, "card": z_card}}}
+
+                    payload = {
+                        "vehicle_id": v_id, "inspector_name": fahrer, "location": standort, "odometer": km, "fuel_level": fuel, "remarks": bemerkung,
+                        "condition_data": {
+                            "battery": battery, "photos": urls, "conditions": erschwert,
+                            "checkliste": {
+                                "floor": c_floor, "seats": c_seats, "covers": c_covers, "instruments": c_instr, "trunk": c_trunk, "engine": c_engine,
+                                "aid_kit": z_aid, "triangle": z_tri, "vest": z_vest, "cable": z_cable, "registration": z_reg, "card": z_card
+                            }
+                        }
+                    }
                     if is_edit: supabase.table("protocols").update(payload).eq("id", st.session_state.edit_id).execute()
                     else: supabase.table("protocols").insert(payload).execute()
-                    st.success("Erfolgreich!")
-                    if is_edit: del st.session_state["edit_id"]
+                    st.success("Gespeichert!")
                     st.rerun()
                 except Exception as e: st.error(f"Fehler: {e}")
 
 # --- TAB 2: ARCHIV & VERWALTUNG ---
 with tab2:
     st.title("Archiv & Verwaltung")
-    search_q = st.text_input("Kennzeichen suchen").upper()
+    search_q = st.text_input("Suche Kennzeichen").upper()
     results = supabase.table("protocols").select("*, vehicles(*)").order("created_at", desc=True).execute().data
+    
     for r in results:
         plate = r['vehicles']['license_plate']
         if search_q in plate:
             confirm_key = f"del_confirm_{r['id']}"
             with st.expander(f"📄 {r['created_at'][:10]} | {plate} | {r['vehicles']['brand_model']}"):
-                col_b1, col_b2, col_b3 = st.columns(3)
-                with col_b1:
+                # 1. Ausführliche Anzeige im Archiv
+                st.write("### Protokoll-Details")
+                c_arc1, c_arc2 = st.columns(2)
+                with c_arc1:
+                    st.write("**Stammdaten**")
+                    st.write(f"Fahrer: {r['inspector_name']}")
+                    st.write(f"Standort: {r['location']}")
+                    st.write(f"VIN: {r['vehicles']['vin']}")
+                    st.write(f"Bedingungen: {', '.join(r['condition_data'].get('conditions', []))}")
+                with c_arc2:
+                    st.write("**Technik**")
+                    st.write(f"KM-Stand: {r['odometer']} KM")
+                    st.write(f"Kraftstoff: {r['fuel_level']}%")
+                    st.write(f"Batterie: {r['condition_data'].get('battery', 0)}%")
+                
+                st.write("---")
+                st.write("**Checkliste**")
+                cl_arc = r['condition_data'].get('checkliste', {})
+                cols_arc = st.columns(3)
+                for idx, (item, val) in enumerate(cl_arc.items()):
+                    cols_arc[idx % 3].write(f"{'✅' if val else '❌'} {item}")
+                
+                st.write(f"**Bemerkung:** {r['remarks']}")
+                
+                st.write("---")
+                st.write("**Fotos**")
+                arc_photos = r['condition_data'].get('photos', {})
+                if arc_photos:
+                    st.image([url for url in arc_photos.values() if url], width=150)
+
+                st.write("---")
+                # 2. Buttons
+                col_btn1, col_btn2, col_btn3 = st.columns(3)
+                with col_btn1:
                     if st.button("Bearbeiten", key=f"ed_{r['id']}"):
                         st.session_state.edit_id, st.session_state.edit_data = r['id'], r
                         st.rerun()
-                with col_b2:
+                with col_btn2:
                     if st.button("📄 PDF vorbereiten", key=f"prep_{r['id']}"):
                         with st.spinner("PDF wird generiert..."):
                             pdf_bytes = create_pdf(r)
                             st.download_button("⬇️ Download PDF", data=pdf_bytes, file_name=f"Protokoll_{plate}.pdf", mime="application/pdf", key=f"dl_{r['id']}")
-                with col_b3:
+                with col_btn3:
                     if st.session_state.get(confirm_key, False):
                         st.warning("Wirklich löschen?")
-                        c_y, c_n = st.columns(2)
-                        with c_y: 
+                        cy, cn = st.columns(2)
+                        with cy: 
                             if st.button("JA", key=f"y_{r['id']}", type="primary"):
                                 supabase.table("protocols").delete().eq("id", r['id']).execute()
                                 del st.session_state[confirm_key]; st.rerun()
-                        with c_n:
+                        with cn:
                             if st.button("NEIN", key=f"n_{r['id']}"):
                                 del st.session_state[confirm_key]; st.rerun()
                     else:
                         if st.button("Löschen", key=f"d_{r['id']}"):
                             st.session_state[confirm_key] = True; st.rerun()
-                
-                # Kurze Info-Übersicht
-                st.write(f"**KM:** {r['odometer']} | **Sprit/Akku:** {r['fuel_level']}% / {r['condition_data'].get('battery')}%")
-                cl = r['condition_data'].get('checkliste', {})
-                st.write(f"Zustand: {'✅' if cl.get('floor') else '❌'} Boden | {'✅' if cl.get('seats') else '❌'} Sitze | Ladekabel: {'✅' if cl.get('cable') else '❌'}")
