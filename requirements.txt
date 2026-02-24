@@ -1,3 +1,4 @@
 streamlit
 supabase
 streamlit-drawable-canvas
+Pillow
