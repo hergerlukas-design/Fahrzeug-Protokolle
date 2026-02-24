@@ -43,7 +43,7 @@ def get_projects():
     except: return []
 
 def create_pdf(data):
-    """Erstellt ein professionelles, deutsches PDF mit allen Fotos und Unterschrift"""
+    """Erstellt ein professionelles PDF mit allen Fotos (inkl. Schäden) und Unterschrift"""
     pdf = FPDF()
     pdf.add_page()
     
@@ -65,7 +65,7 @@ def create_pdf(data):
     pdf.cell(95, 8, f"KM-Stand: {data['odometer']} KM", border=1)
     pdf.cell(95, 8, f"Standort: {data['location']}", border=1, ln=True)
     
-    # 2. Technik & Füllstände
+    # 2. Technik
     pdf.ln(5)
     pdf.set_font("helvetica", "B", 12)
     pdf.cell(0, 10, "2. Technik & Betriebsstoffe", ln=True)
@@ -74,12 +74,11 @@ def create_pdf(data):
     pdf.cell(63, 8, f"Batterie: {data['condition_data'].get('battery', 0)}%", border=1)
     pdf.cell(64, 8, f"Bedingungen: {', '.join(data['condition_data'].get('conditions', []))}", border=1, ln=True)
     
-    # 3. Checkliste
+    # 3. Checkliste (Deutsch)
     pdf.ln(5)
     pdf.set_font("helvetica", "B", 12)
     pdf.cell(0, 10, "3. Checkliste (Zustand & Zubehör)", ln=True)
     pdf.set_font("helvetica", "", 9)
-    
     cl = data['condition_data'].get('checkliste', {})
     uebersetzung = {
         "floor": "Boden sauber", "seats": "Sitze sauber", "covers": "Innenverkleidung",
@@ -87,7 +86,6 @@ def create_pdf(data):
         "aid_kit": "Verbandskasten", "triangle": "Warndreieck", "vest": "Warnweste",
         "cable": "Ladekabel", "registration": "Fahrzeugschein", "card": "Ladekarte/Versicherung"
     }
-    
     items = list(cl.items())
     for i in range(0, len(items), 2):
         k1, v1 = items[i]
@@ -97,41 +95,52 @@ def create_pdf(data):
             pdf.cell(95, 7, f"{uebersetzung.get(k2, k2)}: {'OK' if v2 else 'Nicht OK'}", border=1, ln=True)
         else: pdf.ln(7)
 
-    # 4. Fotos mit Randabständen (Dynamisch)
+    # 4. Schäden Tabelle
+    damage_list = data['condition_data'].get('damage_records', [])
+    if damage_list:
+        pdf.ln(5)
+        pdf.set_font("helvetica", "B", 12)
+        pdf.cell(0, 10, "4. Erfasste Schäden", ln=True)
+        pdf.set_font("helvetica", "B", 9)
+        pdf.cell(60, 7, "Position", border=1)
+        pdf.cell(60, 7, "Art", border=1)
+        pdf.cell(70, 7, "Intensität", border=1, ln=True)
+        pdf.set_font("helvetica", "", 9)
+        for d in damage_list:
+            pdf.cell(60, 7, d['pos'], border=1)
+            pdf.cell(60, 7, d['type'], border=1)
+            pdf.cell(70, 7, d['int'], border=1, ln=True)
+
+    # 5. Fotos mit Randabstand
     photos = data['condition_data'].get('photos', {})
     if photos:
         pdf.add_page()
         pdf.set_font("helvetica", "B", 12)
-        pdf.cell(0, 10, "4. Fotodokumentation", ln=True)
-        
+        pdf.cell(0, 10, "5. Fotodokumentation", ln=True)
         y_pos = 30
         col = 0
-        x_positions = [10, 105] # Spalten-Basis
-        
+        x_positions = [10, 105]
         for p_label, p_url in photos.items():
             if p_url and p_label != "signature":
                 try:
                     img_data = requests.get(p_url).content
-                    # Bild mit 10px (ca 3.5mm) Rand einfügen
                     pdf.image(io.BytesIO(img_data), x=x_positions[col] + 3.5, y=y_pos + 3.5, w=83) 
                     pdf.set_xy(x_positions[col], y_pos + 62)
                     pdf.cell(90, 5, p_label.capitalize(), align="C")
-                    
                     col += 1
                     if col > 1:
                         col = 0
-                        y_pos += 75 # Zeilenabstand
+                        y_pos += 75
                     if y_pos > 230:
-                        pdf.add_page()
-                        y_pos = 20
+                        pdf.add_page(); y_pos = 20
                 except: pass
 
-    # 5. Unterschrift im PDF
+    # 6. Unterschrift
     if "signature" in photos and photos["signature"]:
         if pdf.get_y() > 220: pdf.add_page()
         pdf.ln(10)
         pdf.set_font("helvetica", "B", 12)
-        pdf.cell(0, 10, "5. Bestätigung & Unterschrift", ln=True)
+        pdf.cell(0, 10, "6. Bestätigung & Unterschrift", ln=True)
         try:
             sig_data = requests.get(photos["signature"]).content
             pdf.image(io.BytesIO(sig_data), w=60)
@@ -169,17 +178,42 @@ with tab1:
         standort = st.text_input("Standort", value=s_val)
         datum_zeit = st.text_input("Datum", value=datetime.datetime.now().strftime("%d.%m.%Y %H:%M"))
 
-    st.header("2. Sichtprüfung & Fotos")
+    st.header("2. Sichtprüfung & Schadenserfassung")
     erschwert = st.multiselect("Bedingungen", ["Verschmutzung", "Regen", "Dunkelheit", "Schlechtes Licht"])
-    f_v = st.file_uploader("Vorne", type=['jpg','png'])
-    f_h = st.file_uploader("Hinten", type=['jpg','png'])
-    f_l = st.file_uploader("Links", type=['jpg','png'])
-    f_r = st.file_uploader("Rechts", type=['jpg','png'])
-    f_s = st.file_uploader("Schein", type=['jpg','png'])
-    f_sch1 = st.file_uploader("Schaden Foto 1", type=['jpg','png'])
-    f_sch2 = st.file_uploader("Schaden Foto 2", type=['jpg','png'])
+    
+    st.subheader("Pflicht-Fotos (Rundumblick)")
+    c_f1, c_f2 = st.columns(2)
+    with c_f1:
+        f_v = st.file_uploader("Vorne", type=['jpg','png'])
+        f_l = st.file_uploader("Links", type=['jpg','png'])
+        f_s = st.file_uploader("Schein", type=['jpg','png'])
+    with c_f2:
+        f_h = st.file_uploader("Hinten", type=['jpg','png'])
+        f_r = st.file_uploader("Rechts", type=['jpg','png'])
 
-    st.header("3. Checkliste")
+    # NEU: Dynamisches Schadensmenü
+    st.subheader("🛠️ Schäden erfassen")
+    if "damage_count" not in st.session_state: st.session_state.damage_count = 0
+    
+    if st.button("+ Neuen Schaden hinzufügen"):
+        st.session_state.damage_count += 1
+
+    damage_records = []
+    damage_photos = {}
+    
+    for i in range(st.session_state.damage_count):
+        with st.expander(f"Schaden #{i+1}", expanded=True):
+            d_col1, d_col2 = st.columns(2)
+            with d_col1:
+                pos = st.selectbox(f"Position", ["Stoßfänger vorne", "Stoßfänger hinten", "Motorhaube", "Dach", "Tür vorne links", "Tür vorne rechts", "Tür hinten links", "Tür hinten rechts", "Kotflügel vorne links", "Kotflügel vorne rechts", "Felge VL", "Felge VR", "Felge HL", "Felge HR"], key=f"pos_{i}")
+                dtype = st.radio(f"Art des Schadens", ["Kratzer", "Delle", "Steinschlag", "Riss", "Fehlteil"], key=f"type_{i}", horizontal=True)
+            with d_col2:
+                intens = st.select_slider(f"Intensität", options=["Oberflächlich", "Bis Grundierung", "Deformiert"], key=f"int_{i}")
+                d_photo = st.file_uploader(f"Foto Schaden #{i+1}", type=['jpg','png'], key=f"photo_{i}")
+                if d_photo: damage_photos[f"schaden_{i+1}"] = d_photo
+            damage_records.append({"pos": pos, "type": dtype, "int": intens})
+
+    st.header("3. Checkliste (Innenraum & Zubehör)")
     old_cl = st.session_state.edit_data['condition_data'].get('checkliste', {}) if is_edit else {}
     c1, c2 = st.columns(2)
     with c1:
@@ -204,7 +238,6 @@ with tab1:
 
     st.header("5. Abschluss & Unterschrift")
     bemerkung = st.text_area("Bemerkungen")
-    # Unterschriftenfeld (Canvas)
     canvas_result = st_canvas(fill_color="rgba(255, 165, 0, 0.3)", stroke_width=3, stroke_color="#000000", background_color="#eeeeee", height=150, key="canvas")
     confirm = st.checkbox("Ich bestätige die Richtigkeit der Angaben")
 
@@ -218,19 +251,28 @@ with tab1:
                     v_res = supabase.table("vehicles").upsert({"project_id": p_id, "license_plate": kennzeichen, "brand_model": hersteller, "vin": vin}, on_conflict="license_plate").execute()
                     v_id = v_res.data[0]['id']
                     path = f"{p_name}/{kennzeichen}"
-                    urls = st.session_state.edit_data['condition_data'].get('photos', {}) if is_edit else {}
-                    for k, f in [("vorne",f_v),("hinten",f_h),("links",f_l),("rechts",f_r),("schein",f_s),("schaden1",f_sch1),("schaden2",f_sch2)]:
-                        if f: urls[k] = upload_photo(f, path, k)
                     
-                    # Unterschrift verarbeiten
+                    # Fotos hochladen
+                    urls = {}
+                    for k, f in [("vorne",f_v),("hinten",f_h),("links",f_l),("rechts",f_r),("schein",f_s)]:
+                        if f: urls[k] = upload_photo(f, path, k)
+                    for k, f in damage_photos.items():
+                        urls[k] = upload_photo(f, path, k)
+                    
                     if canvas_result.image_data is not None:
                         im = Image.fromarray(canvas_result.image_data.astype('uint8'), 'RGBA')
                         urls["signature"] = upload_photo(im, path, "sign", is_pil=True)
 
-                    payload = {"vehicle_id": v_id, "inspector_name": fahrer, "location": standort, "odometer": km, "fuel_level": fuel, "remarks": bemerkung, "condition_data": {"battery": battery, "photos": urls, "conditions": erschwert, "checkliste": {"floor": c_floor, "seats": c_seats, "covers": c_covers, "instruments": c_instr, "trunk": c_trunk, "engine": c_engine, "aid_kit": z_aid, "triangle": z_tri, "vest": z_vest, "cable": z_cable, "registration": z_reg, "card": z_card}}}
+                    payload = {
+                        "vehicle_id": v_id, "inspector_name": fahrer, "location": standort, "odometer": km, "fuel_level": fuel, "remarks": bemerkung,
+                        "condition_data": {
+                            "battery": battery, "photos": urls, "conditions": erschwert, "damage_records": damage_records,
+                            "checkliste": {"floor": c_floor, "seats": c_seats, "covers": c_covers, "instruments": c_instr, "trunk": c_trunk, "engine": c_engine, "aid_kit": z_aid, "triangle": z_tri, "vest": z_vest, "cable": z_cable, "registration": z_reg, "card": z_card}
+                        }
+                    }
                     if is_edit: supabase.table("protocols").update(payload).eq("id", st.session_state.edit_id).execute()
                     else: supabase.table("protocols").insert(payload).execute()
-                    st.success("Gespeichert!"); st.rerun()
+                    st.success("Erfolgreich!"); st.session_state.damage_count = 0; st.rerun()
                 except Exception as e: st.error(f"Fehler: {e}")
 
 # --- TAB 2: ARCHIV & VERWALTUNG ---
@@ -243,24 +285,33 @@ with tab2:
         if search_q in plate:
             confirm_key = f"del_confirm_{r['id']}"
             with st.expander(f"📄 {r['created_at'][:10]} | {plate} | {r['vehicles']['brand_model']}"):
+                st.write("### Protokoll-Details")
                 c_arc1, c_arc2 = st.columns(2)
                 with c_arc1:
-                    st.write(f"**Fahrer:** {r['inspector_name']} | **Standort:** {r['location']}")
-                    st.write(f"**VIN:** {r['vehicles']['vin']}")
-                    st.write(f"**Bedingungen:** {', '.join(r['condition_data'].get('conditions', []))}")
+                    st.write(f"**Fahrer:** {r['inspector_name']} | **VIN:** {r['vehicles']['vin']}")
+                    st.write(f"**Standort:** {r['location']}")
                 with c_arc2:
-                    st.write(f"**KM-Stand:** {r['odometer']} KM")
-                    st.write(f"**Sprit:** {r['fuel_level']}% | **Akku:** {r['condition_data'].get('battery', 0)}%")
+                    st.write(f"**KM:** {r['odometer']} | **Sprit:** {r['fuel_level']}% | **Akku:** {r['condition_data'].get('battery', 0)}%")
+                
+                # Schäden im Archiv anzeigen
+                dmg_arc = r['condition_data'].get('damage_records', [])
+                if dmg_arc:
+                    st.write("**Gefundene Schäden:**")
+                    for d in dmg_arc: st.info(f"📍 {d['pos']} | 🛠️ {d['type']} | ⚠️ {d['int']}")
+                
                 st.write("---")
                 st.write("**Checkliste:**")
                 cl_arc = r['condition_data'].get('checkliste', {})
                 cols_arc = st.columns(3)
                 for idx, (item, val) in enumerate(cl_arc.items()):
                     cols_arc[idx % 3].write(f"{'✅' if val else '❌'} {item}")
-                st.write(f"**Bemerkung:** {r['remarks']}")
+                
                 arc_photos = r['condition_data'].get('photos', {})
                 if arc_photos:
+                    st.write("---")
+                    st.write("**Fotos:**")
                     st.image([url for url in arc_photos.values() if url], width=150)
+
                 st.write("---")
                 col_btn1, col_btn2, col_btn3 = st.columns(3)
                 with col_btn1:
@@ -276,7 +327,7 @@ with tab2:
                         if st.button("JA, Löschen", key=f"y_{r['id']}", type="primary"):
                             supabase.table("protocols").delete().eq("id", r['id']).execute()
                             del st.session_state[confirm_key]; st.rerun()
-                        if st.button("Abbrechen", key=f"n_{r['id']}"):
+                        if st.button("NEIN", key=f"n_{r['id']}"):
                             del st.session_state[confirm_key]; st.rerun()
                     else:
                         if st.button("Löschen", key=f"d_{r['id']}"):
