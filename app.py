@@ -6,7 +6,7 @@ import io
 import datetime
 import uuid
 import requests
-import re  # ---> FIX: Import für die Textbereinigung
+import re  # NEU für den Fix
 from fpdf import FPDF
 
 # --- 1. SETUP ---
@@ -16,7 +16,7 @@ supabase: Client = create_client(url, key)
 
 st.set_page_config(page_title="Vehicle Protocol Pro", layout="wide", page_icon="🚗")
 
-# --- Sticky Tabs CSS ---
+# Sticky Tabs CSS
 st.markdown("""
     <style>
         div[data-testid="stTabs"] > div:first-child {
@@ -34,32 +34,35 @@ tab1, tab2 = st.tabs(["📝 Protokoll erstellen / Bearbeiten", "🔍 Archiv & Ve
 
 # --- 2. HILFSFUNKTIONEN ---
 
-# ---> FIX: Funktion zum Bereinigen von Dateipfaden (verhindert den InvalidKey Fehler)
 def sanitize_filename(text):
-    if not text:
-        return "unbekannt"
-    # Umlaute und Sonderzeichen ersetzen
+    """Bereinigt Texte für den Speicherpfad (entfernt &, Leerzeichen, Umlaute)"""
+    if not text: return "unbekannt"
     replacements = {
         "ä": "ae", "ö": "oe", "ü": "ue", "Ä": "Ae", "Ö": "Oe", "Ü": "Ue", "ß": "ss",
         "&": "_and_", " ": "_"
     }
     for char, replacement in replacements.items():
         text = text.replace(char, replacement)
-    # Nur Buchstaben, Zahlen, Unterstriche und Bindestriche erlauben
-    text = re.sub(r'[^a-zA-Z0-9_\-]', '', text)
-    return text
+    # Entfernt alles außer Buchstaben, Zahlen, Unterstriche und Bindestriche
+    return re.sub(r'[^a-zA-Z0-9_\-]', '', text)
 
-def upload_photo(file, folder, p_type, is_pil=False):
+def upload_photo(file, folder_path, p_type, is_pil=False):
     if file is None: return None
     try:
+        # FIX: Hier wird der gesamte Pfad (Projekt/Kennzeichen) bereinigt
+        clean_parts = [sanitize_filename(part) for part in folder_path.split("/")]
+        clean_folder = "/".join(clean_parts)
+        
         ext = "png" if is_pil else "jpg"
-        path = f"{folder}/{datetime.date.today()}_{p_type}_{uuid.uuid4().hex[:5]}.{ext}"
+        path = f"{clean_folder}/{datetime.date.today()}_{p_type}_{uuid.uuid4().hex[:5]}.{ext}"
+        
         if is_pil:
             img_byte_arr = io.BytesIO()
             file.save(img_byte_arr, format='PNG')
             content = img_byte_arr.getvalue()
         else:
             content = file.getvalue()
+        
         supabase.storage.from_("vehicle-photos").upload(path, content)
         return supabase.storage.from_("vehicle-photos").get_public_url(path)
     except Exception as e:
@@ -298,10 +301,8 @@ with tab1:
                     v_res = supabase.table("vehicles").upsert({"project_id": p_id, "license_plate": kennzeichen, "brand_model": hersteller, "vin": vin}, on_conflict="license_plate").execute()
                     v_id = v_res.data[0]['id']
                     
-                    # ---> FIX: Bereinigung der Ordnernamen für den Cloud-Speicher
-                    safe_p_name = sanitize_filename(p_name)
-                    safe_kennzeichen = sanitize_filename(kennzeichen)
-                    path = f"{safe_p_name}/{safe_kennzeichen}"
+                    # Pfad für den Upload (wird in upload_photo gereinigt!)
+                    path = f"{p_name}/{kennzeichen}"
                     
                     final_urls = st.session_state.edit_data['condition_data'].get('photos', {}) if is_edit else {}
                     for k, f in [("vorne",f_v),("hinten",f_h),("links",f_l),("rechts",f_r),("schein",f_s)]:
@@ -354,7 +355,6 @@ with tab2:
                 if r.get('remarks'): st.write(f"**Bemerkungen:** {r['remarks']}")
                 arc_photos = r['condition_data'].get('photos', {})
                 if arc_photos:
-                    st.write("**Fotos:**")
                     st.image([url for url in arc_photos.values() if url], width=150)
                 
                 st.write("---")
@@ -376,4 +376,4 @@ with tab2:
                     else:
                         if st.button("Löschen", key=f"d_{r['id']}"):
                             st.session_state[confirm_key] = True; st.rerun()
-            
+        
