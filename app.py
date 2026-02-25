@@ -291,16 +291,16 @@ class UnicodePDF(FPDF):
         """Logo oben links (22mm breit) + roter Streifen unten rechts auf jeder Seite."""
         if os.path.exists(LOGO_PATH):
             try:
-                self.image(LOGO_PATH, x=10, y=5, w=22) #Logo abstand vom Blattrand (von links, von oben, grösse mm)
+                self.image(LOGO_PATH, x=175, y=5, w=22) #Logo abstand vom Blattrand (von links, von oben, grösse mm)
             except Exception:
                 pass
         # Roter Streifen unten rechts
         self.set_fill_color(219, 50, 62) #Farbe R,G,B
-        self.rect( 207, 150, 3, 147, style="F") #abstand (von links, von oben, breite, länge)
+        self.rect( 0, 150, 3, 147, style="F") #abstand (von links, von oben, breite, länge)
 
          # Grauer Streifen oben
         self.set_fill_color( 63, 63, 63) #Farbe R,G,B
-        self.rect( 0, 0, 3, 100, style="F") #abstand (von links, von oben, breite, länge)
+        self.rect( 207, 0, 3, 100, style="F") #abstand (von links, von oben, breite, länge)
 
 
 def _prepare_image_bytes(img_bytes: bytes) -> bytes:
