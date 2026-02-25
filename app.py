@@ -15,6 +15,20 @@ supabase: Client = create_client(url, key)
 
 st.set_page_config(page_title="Vehicle Protocol Pro", layout="wide", page_icon="🚗")
 
+# NEU: CSS für fixierte Tabs (Sticky Tabs)
+st.markdown("""
+    <style>
+        div[data-testid="stTabs"] > div:first-child {
+            position: sticky;
+            top: 0;
+            background-color: white;
+            z-index: 999;
+            padding-top: 10px;
+            border-bottom: 1px solid #ddd;
+        }
+    </style>
+""", unsafe_allow_html=True)
+
 # Navigation Tabs
 tab1, tab2 = st.tabs(["📝 Protokoll erstellen / Bearbeiten", "🔍 Archiv & Verwaltung"])
 
@@ -95,7 +109,7 @@ def create_pdf(data):
             pdf.cell(95, 7, f"{uebersetzung.get(k2, k2)}: {'OK' if v2 else 'Nicht OK'}", border=1, ln=True)
         else: pdf.ln(7)
 
-    # NEU: 4. Bemerkungen
+    # 4. Bemerkungen im PDF
     if data.get('remarks'):
         pdf.ln(5)
         pdf.set_font("helvetica", "B", 12)
@@ -197,22 +211,23 @@ with tab1:
 
     st.subheader("🛠️ Schäden erfassen")
     if "damage_count" not in st.session_state: st.session_state.damage_count = 0
-    if st.button("+ Neuen Schaden hinzufügen"): st.session_state.damage_count += 1
+    if st.button("+ Neuen Schaden hinzufügen"):
+        st.session_state.damage_count += 1
 
     damage_records, damage_photos = [], {}
     for i in range(st.session_state.damage_count):
         with st.expander(f"Schaden #{i+1}", expanded=True):
-            d1, d2 = st.columns(2)
-            with d1:
-                pos = st.selectbox(f"Position", ["Stoßfänger vorne", "Stoßfänger hinten", "Motorhaube", "Dach", "Tür VL", "Tür VR", "Felge VL", "Felge VR", "Felge HL", "Felge HR"], key=f"pos_{i}")
-                dtype = st.radio(f"Art", ["Kratzer", "Delle", "Steinschlag", "Riss", "Fehlteil"], key=f"type_{i}", horizontal=True)
-            with d2:
+            d_col1, d_col2 = st.columns(2)
+            with d_col1:
+                pos = st.selectbox(f"Position", ["Stoßfänger vorne", "Stoßfänger hinten", "Motorhaube", "Dach", "Tür vorne links", "Tür vorne rechts", "Tür hinten links", "Tür hinten rechts", "Kotflügel vorne links", "Kotflügel vorne rechts", "Felge VL", "Felge VR", "Felge HL", "Felge HR"], key=f"pos_{i}")
+                dtype = st.radio(f"Art des Schadens", ["Kratzer", "Delle", "Steinschlag", "Riss", "Fehlteil"], key=f"type_{i}", horizontal=True)
+            with d_col2:
                 intens = st.select_slider(f"Intensität", options=["Oberflächlich", "Bis Grundierung", "Deformiert"], key=f"int_{i}")
                 d_photo = st.file_uploader(f"Foto Schaden #{i+1}", type=['jpg','png'], key=f"photo_{i}")
                 if d_photo: damage_photos[f"schaden_{i+1}"] = d_photo
             damage_records.append({"pos": pos, "type": dtype, "int": intens})
 
-    st.header("3. Checkliste")
+    st.header("3. Checkliste (Innenraum & Zubehör)")
     old_cl = st.session_state.edit_data['condition_data'].get('checkliste', {}) if is_edit else {}
     c1, c2 = st.columns(2)
     with c1:
@@ -230,12 +245,12 @@ with tab1:
         z_reg = st.toggle("Fahrzeugschein", old_cl.get('registration', True))
         z_card = st.toggle("Ladekarte", old_cl.get('card', True))
 
-    st.header("4. Füllstände")
+    st.header("4. Betriebsstoffe")
     fuel = st.slider("Kraftstoff %", 0, 100, 50)
     battery = st.slider("Batterie %", 0, 100, 100)
     km = st.number_input("Kilometer", min_value=0)
 
-    st.header("5. Abschluss")
+    st.header("5. Abschluss & Unterschrift")
     bemerkung = st.text_area("Bemerkungen")
     canvas_result = st_canvas(fill_color="rgba(255, 165, 0, 0.3)", stroke_width=3, stroke_color="#000000", background_color="#eeeeee", height=150, key="canvas")
     confirm = st.checkbox("Ich bestätige die Richtigkeit der Angaben")
@@ -264,7 +279,7 @@ with tab1:
                     st.success("Erfolgreich!"); st.session_state.damage_count = 0; st.rerun()
                 except Exception as e: st.error(f"Fehler: {e}")
 
-# --- TAB 2: ARCHIV ---
+# --- TAB 2: ARCHIV & VERWALTUNG ---
 with tab2:
     st.title("Archiv & Verwaltung")
     search_q = st.text_input("Suche Kennzeichen").upper()
@@ -274,15 +289,15 @@ with tab2:
         if search_q in plate:
             confirm_key = f"del_confirm_{r['id']}"
             with st.expander(f"📄 {r['created_at'][:10]} | {plate} | {r['vehicles']['brand_model']}"):
-                c1, c2 = st.columns(2)
-                with c1:
+                c_arc1, c_arc2 = st.columns(2)
+                with c_arc1:
                     st.write(f"**Ersteller:** {r['inspector_name']} | **VIN:** {r['vehicles']['vin']}")
                     st.write(f"**Standort:** {r['location']}")
                     dmg_arc = r['condition_data'].get('damage_records', [])
                     if dmg_arc:
                         st.write("**Schäden:**")
                         for d in dmg_arc: st.info(f"📍 {d['pos']} | 🛠️ {d['type']} | ⚠️ {d['int']}")
-                with c2:
+                with c_arc2:
                     st.write(f"**KM:** {r['odometer']} | **Sprit:** {r['fuel_level']}% | **Akku:** {r['condition_data'].get('battery', 0)}%")
                     st.write("**Checkliste:**")
                     cl_arc = r['condition_data'].get('checkliste', {})
@@ -311,3 +326,4 @@ with tab2:
                     else:
                         if st.button("Löschen", key=f"d_{r['id']}"):
                             st.session_state[confirm_key] = True; st.rerun()
+                            
