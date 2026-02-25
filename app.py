@@ -391,21 +391,43 @@ def create_pdf(data: dict) -> bytes:
     # ── 3. Checkliste ────────────────────────────────────────────────────────
     pdf.ln(4)
     pdf.set_font("helvetica", "B", 12)
-    pdf.cell(0, 8, u("3. Checkliste (Zustand & Zubehör)"), ln=True)
-    pdf.set_font("helvetica", "", 9)
+    pdf.cell(0, 8, u("3. Checkliste"), ln=True)
+
     cl = data["condition_data"].get("checkliste", {})
-    items = list(cl.items())
 
     def cl_val(key: str, val: bool) -> str:
         if key in CHECKLIST_JA_NEIN:
             return "Ja" if val else "Nein"
         return "Sauber" if val else "Nicht sauber"
 
-    for i in range(0, len(items), 2):
-        k1, v1 = items[i]
+    ZUSTAND_KEYS = ["floor", "seats", "entry", "instruments", "trunk", "engine"]
+    ZUBEHOER_KEYS = ["aid_kit", "triangle", "vest", "cable", "registration", "card"]
+
+    # Zustand
+    pdf.set_font("helvetica", "B", 10)
+    pdf.cell(0, 7, "Zustand", ln=True)
+    pdf.set_font("helvetica", "", 9)
+    zustand_items = [(k, cl[k]) for k in ZUSTAND_KEYS if k in cl]
+    for i in range(0, len(zustand_items), 2):
+        k1, v1 = zustand_items[i]
         pdf.cell(95, 7, f"{CHECKLIST_LABELS.get(k1, k1)}: {cl_val(k1, v1)}", border=1)
-        if i + 1 < len(items):
-            k2, v2 = items[i + 1]
+        if i + 1 < len(zustand_items):
+            k2, v2 = zustand_items[i + 1]
+            pdf.cell(95, 7, f"{CHECKLIST_LABELS.get(k2, k2)}: {cl_val(k2, v2)}", border=1, ln=True)
+        else:
+            pdf.ln(7)
+
+    # Zubehör
+    pdf.ln(3)
+    pdf.set_font("helvetica", "B", 10)
+    pdf.cell(0, 7, u("Zubehör"), ln=True)
+    pdf.set_font("helvetica", "", 9)
+    zubehoer_items = [(k, cl[k]) for k in ZUBEHOER_KEYS if k in cl]
+    for i in range(0, len(zubehoer_items), 2):
+        k1, v1 = zubehoer_items[i]
+        pdf.cell(95, 7, f"{CHECKLIST_LABELS.get(k1, k1)}: {cl_val(k1, v1)}", border=1)
+        if i + 1 < len(zubehoer_items):
+            k2, v2 = zubehoer_items[i + 1]
             pdf.cell(95, 7, f"{CHECKLIST_LABELS.get(k2, k2)}: {cl_val(k2, v2)}", border=1, ln=True)
         else:
             pdf.ln(7)
