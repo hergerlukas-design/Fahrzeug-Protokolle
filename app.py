@@ -400,37 +400,40 @@ def create_pdf(data: dict) -> bytes:
             return "Ja" if val else "Nein"
         return "Sauber" if val else "Nicht sauber"
 
-    ZUSTAND_KEYS = ["floor", "seats", "entry", "instruments", "trunk", "engine"]
+    ZUSTAND_KEYS  = ["floor", "seats", "entry", "instruments", "trunk", "engine"]
     ZUBEHOER_KEYS = ["aid_kit", "triangle", "vest", "cable", "registration", "card"]
 
-    # Zustand
-    pdf.set_font("helvetica", "B", 10)
-    pdf.cell(0, 7, "Zustand", ln=True)
-    pdf.set_font("helvetica", "", 9)
-    zustand_items = [(k, cl[k]) for k in ZUSTAND_KEYS if k in cl]
-    for i in range(0, len(zustand_items), 2):
-        k1, v1 = zustand_items[i]
-        pdf.cell(95, 7, f"{CHECKLIST_LABELS.get(k1, k1)}: {cl_val(k1, v1)}", border=1)
-        if i + 1 < len(zustand_items):
-            k2, v2 = zustand_items[i + 1]
-            pdf.cell(95, 7, f"{CHECKLIST_LABELS.get(k2, k2)}: {cl_val(k2, v2)}", border=1, ln=True)
-        else:
-            pdf.ln(7)
-
-    # Zubehör
-    pdf.ln(3)
-    pdf.set_font("helvetica", "B", 10)
-    pdf.cell(0, 7, u("Zubehör"), ln=True)
-    pdf.set_font("helvetica", "", 9)
+    zustand_items  = [(k, cl[k]) for k in ZUSTAND_KEYS  if k in cl]
     zubehoer_items = [(k, cl[k]) for k in ZUBEHOER_KEYS if k in cl]
-    for i in range(0, len(zubehoer_items), 2):
-        k1, v1 = zubehoer_items[i]
-        pdf.cell(95, 7, f"{CHECKLIST_LABELS.get(k1, k1)}: {cl_val(k1, v1)}", border=1)
-        if i + 1 < len(zubehoer_items):
-            k2, v2 = zubehoer_items[i + 1]
-            pdf.cell(95, 7, f"{CHECKLIST_LABELS.get(k2, k2)}: {cl_val(k2, v2)}", border=1, ln=True)
-        else:
-            pdf.ln(7)
+
+    COL_L = 10    # x Start linke Spalte
+    COL_R = 108   # x Start rechte Spalte
+    COL_W = 90    # Breite pro Spalte
+    ROW_H = 7
+
+    # Überschriften
+    x_after_headers = pdf.get_y()
+    pdf.set_font("helvetica", "B", 10)
+    pdf.set_xy(COL_L, x_after_headers)
+    pdf.cell(COL_W, ROW_H, "Zustand", ln=False)
+    pdf.set_xy(COL_R, x_after_headers)
+    pdf.cell(COL_W, ROW_H, u("Zubehör"), ln=True)
+
+    # Zeilen
+    pdf.set_font("helvetica", "", 9)
+    rows = max(len(zustand_items), len(zubehoer_items))
+    for i in range(rows):
+        y = pdf.get_y()
+        if i < len(zustand_items):
+            k, v = zustand_items[i]
+            pdf.set_xy(COL_L, y)
+            pdf.cell(COL_W, ROW_H, f"{CHECKLIST_LABELS.get(k, k)}: {cl_val(k, v)}", border=1)
+        if i < len(zubehoer_items):
+            k, v = zubehoer_items[i]
+            pdf.set_xy(COL_R, y)
+            pdf.cell(COL_W, ROW_H, f"{CHECKLIST_LABELS.get(k, k)}: {cl_val(k, v)}", border=1)
+        pdf.ln(ROW_H)
+
 
     # ── 4. Bemerkungen ───────────────────────────────────────────────────────
     if data.get("remarks"):
