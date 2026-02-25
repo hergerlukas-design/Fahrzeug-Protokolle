@@ -295,7 +295,7 @@ class UnicodePDF(FPDF):
             except Exception:
                 pass
         # Roter Streifen unten rechts
-        self.set_fill_color(200, 0, 0)
+        self.set_fill_color(219, 50, 62)
         self.rect(196, 250, 6, 45, style="F")
 
 
