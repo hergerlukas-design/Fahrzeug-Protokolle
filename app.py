@@ -296,11 +296,11 @@ class UnicodePDF(FPDF):
                 pass
         # Roter Streifen unten rechts
         self.set_fill_color(219, 50, 62) #Farbe R,G,B
-        self.rect( 204, 150, 4, 147, style="F") #abstand (von links, von oben, breite, länge)
+        self.rect( 207, 150, 3, 147, style="F") #abstand (von links, von oben, breite, länge)
 
          # Grauer Streifen oben
         self.set_fill_color( 63, 63, 63) #Farbe R,G,B
-        self.rect( 0, 0, 4, 100, style="F") #abstand (von links, von oben, breite, länge)
+        self.rect( 0, 0, 3, 100, style="F") #abstand (von links, von oben, breite, länge)
 
 
 def _prepare_image_bytes(img_bytes: bytes) -> bytes:
@@ -370,7 +370,7 @@ def create_pdf(data: dict) -> bytes:
 
     # ── Seitenheader: Titel rechts vom Logo, Datum + Unterschrift ganz rechts ─
     # Logo belegt x:10-32, y:5-~20 → Titel startet bei x=35
-    SIG_X, SIG_Y, SIG_W, SIG_BOX_H = 145, 8, 55, 30
+    SIG_X, SIG_Y, SIG_W, SIG_BOX_H = 145, 250, 55, 30
 
     pdf.set_font("helvetica", "B", 16)
     pdf.set_xy(35, 12)
@@ -379,7 +379,7 @@ def create_pdf(data: dict) -> bytes:
     # Datum + Unterschrift-Box oben rechts
     pdf.set_font("helvetica", "", 8)
     pdf.set_xy(SIG_X, SIG_Y)
-    pdf.cell(SIG_W, 5, f"Datum: {data['created_at'][:10]}", ln=True, align="C")
+    pdf.cell(SIG_W, 5, f"Datum: {data['created_at'][:10]}", ln=True, align="C")  #Datum, kann geändert werden wenn sig_x und y geändert werden in Zahlen. SIG steht für die bindung an die Signatur
     pdf.set_font("helvetica", "B", 8)
     pdf.set_xy(SIG_X, SIG_Y + 5)
     pdf.cell(SIG_W, 5, u("Unterschrift"), ln=True, align="C")
