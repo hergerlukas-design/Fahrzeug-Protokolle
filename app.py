@@ -67,7 +67,7 @@ def render_header_with_logo(title_text: str):
         html = f"""
         <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: nowrap; margin-bottom: 25px;">
             <h1 style="margin: 0; padding: 0; line-height: 1.2;">{title_text}</h1>
-            <img src="data:image/png;base64,{b64_string}" style="width: 70px; flex-shrink: 0;">
+            <img src="data:image/png;base64,{b64_string}" style="width: 70px; flex-shrink: 0; margin-right: 15px;">
         </div>
         """
         st.markdown(html, unsafe_allow_html=True)
