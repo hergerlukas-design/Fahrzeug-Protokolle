@@ -274,13 +274,39 @@ class UnicodePDF(FPDF):
     pass
 
 
+def _get_photo_display_size(img_bytes: bytes, max_w: float, max_h: float) -> tuple[float, float]:
+    """
+    Berechnet die Anzeigegröße eines Fotos unter Beibehaltung des Seitenverhältnisses.
+    WICHTIG: pdf.image() wird immer NUR mit w= aufgerufen (nie h=), sonst verzerrt FPDF.
+    Diese Funktion gibt die tatsächlich gerenderte (w, h) zurück für Positionsberechnungen.
+    """
+    try:
+        from PIL import ImageOps
+        pil_img = Image.open(io.BytesIO(img_bytes))
+        pil_img = ImageOps.exif_transpose(pil_img)   # EXIF-Rotation korrigieren
+        orig_w, orig_h = pil_img.size
+    except Exception:
+        return max_w, max_h
+
+    # Erst auf max_w begrenzen
+    scale = max_w / orig_w
+    disp_w = max_w
+    disp_h = orig_h * scale
+
+    # Falls zu hoch: auf max_h begrenzen und Breite anpassen
+    if disp_h > max_h:
+        scale = max_h / orig_h
+        disp_h = max_h
+        disp_w = orig_w * scale
+
+    return disp_w, disp_h
+
+
 def create_pdf(data: dict) -> bytes:
     pdf = UnicodePDF()
-    # Für korrekte Umlaute: latin-1 encoding via core font
     pdf.add_page()
     pdf.set_font("helvetica", "B", 16)
 
-    # Hilfsfunktion: Umlaute für FPDF1 konvertieren
     def u(text: str) -> str:
         """Konvertiert Umlaute für FPDF1-Kompatibilität."""
         if not isinstance(text, str):
@@ -291,14 +317,44 @@ def create_pdf(data: dict) -> bytes:
                 .replace("ß", "ss")
         )
 
-    pdf.cell(0, 10, u("Fahrzeug-Übergabeprotokoll"), ln=True, align="C")
-    pdf.set_font("helvetica", "", 10)
-    pdf.cell(0, 10, f"Erstellt am: {data['created_at'][:10]}", ln=True, align="R")
+    photos = data["condition_data"].get("photos", {})
 
-    # 1. Basisdaten
-    pdf.ln(5)
+    # ── Unterschrift vorab herunterladen für Seite 1 ────────────────────────
+    sig_bytes = None
+    if photos.get("signature"):
+        sig_bytes = _fetch_image_bytes(photos["signature"])
+
+    # ── Seitenheader: Titel links, Datum + Unterschrift rechts ──────────────
+    # Unterschrift-Box: x=145, y=8, w=55, h=30
+    SIG_X, SIG_Y, SIG_W, SIG_BOX_H = 145, 8, 55, 30
+
+    pdf.set_font("helvetica", "B", 16)
+    pdf.set_xy(10, 15)
+    pdf.cell(130, 10, u("Fahrzeug-Übergabeprotokoll"), ln=False)
+
+    # Datum + Unterschrift-Box oben rechts
+    pdf.set_font("helvetica", "", 8)
+    pdf.set_xy(SIG_X, SIG_Y)
+    pdf.cell(SIG_W, 5, f"Datum: {data['created_at'][:10]}", ln=True, align="C")
+    pdf.set_font("helvetica", "B", 8)
+    pdf.set_xy(SIG_X, SIG_Y + 5)
+    pdf.cell(SIG_W, 5, u("Unterschrift"), ln=True, align="C")
+    # Unterschrift-Bild einfügen (nur w=, kein h= → kein Verzerren)
+    if sig_bytes:
+        try:
+            sig_disp_w, sig_disp_h = _get_photo_display_size(sig_bytes, SIG_W, SIG_BOX_H - 6)
+            sig_img_x = SIG_X + (SIG_W - sig_disp_w) / 2
+            pdf.image(io.BytesIO(sig_bytes), x=sig_img_x, y=SIG_Y + 10, w=sig_disp_w)
+        except Exception:
+            pass
+    # Rahmen um Unterschrift-Box
+    pdf.rect(SIG_X, SIG_Y, SIG_W, SIG_BOX_H + 2)
+
+    pdf.set_xy(10, 28)
+
+    # ── 1. Basisdaten ────────────────────────────────────────────────────────
     pdf.set_font("helvetica", "B", 12)
-    pdf.cell(0, 10, "1. Basisdaten", ln=True)
+    pdf.cell(0, 8, "1. Basisdaten", ln=True)
     pdf.set_font("helvetica", "", 10)
     pdf.cell(95, 8, f"Kennzeichen: {data['vehicles']['license_plate']}", border=1)
     pdf.cell(95, 8, u(f"Modell: {data['vehicles']['brand_model']}"), border=1, ln=True)
@@ -307,29 +363,24 @@ def create_pdf(data: dict) -> bytes:
     pdf.cell(95, 8, f"KM-Stand: {data['odometer']} KM", border=1)
     pdf.cell(95, 8, u(f"Standort: {data['location']}"), border=1, ln=True)
 
-    # 2. Technik
-    pdf.ln(5)
+    # ── 2. Technik ───────────────────────────────────────────────────────────
+    pdf.ln(4)
     pdf.set_font("helvetica", "B", 12)
-    pdf.cell(0, 10, "2. Technik & Betriebsstoffe", ln=True)
+    pdf.cell(0, 8, "2. Technik & Betriebsstoffe", ln=True)
     pdf.set_font("helvetica", "", 10)
     pdf.cell(63, 8, f"Kraftstoff: {data['fuel_level']}%", border=1)
     pdf.cell(63, 8, f"Batterie: {data['condition_data'].get('battery', 0)}%", border=1)
-    pdf.cell(
-        64, 8,
-        u(f"Bedingungen: {', '.join(data['condition_data'].get('conditions', []))}"),
-        border=1, ln=True
-    )
+    pdf.cell(64, 8, u(f"Bedingungen: {', '.join(data['condition_data'].get('conditions', []))}"), border=1, ln=True)
 
-    # 3. Checkliste
-    pdf.ln(5)
+    # ── 3. Checkliste ────────────────────────────────────────────────────────
+    pdf.ln(4)
     pdf.set_font("helvetica", "B", 12)
-    pdf.cell(0, 10, "3. Checkliste (Zustand & Zubehör)", ln=True)
+    pdf.cell(0, 8, u("3. Checkliste (Zustand & Zubehör)"), ln=True)
     pdf.set_font("helvetica", "", 9)
     cl = data["condition_data"].get("checkliste", {})
     items = list(cl.items())
     for i in range(0, len(items), 2):
         k1, v1 = items[i]
-        # FIX (Qualität): Gemeinsame CHECKLIST_LABELS-Konstante verwenden
         pdf.cell(95, 7, f"{CHECKLIST_LABELS.get(k1, k1)}: {'OK' if v1 else 'Nicht OK'}", border=1)
         if i + 1 < len(items):
             k2, v2 = items[i + 1]
@@ -337,139 +388,155 @@ def create_pdf(data: dict) -> bytes:
         else:
             pdf.ln(7)
 
-    # 4. Bemerkungen
+    # ── 4. Bemerkungen ───────────────────────────────────────────────────────
     if data.get("remarks"):
-        pdf.ln(5)
+        pdf.ln(4)
         pdf.set_font("helvetica", "B", 12)
-        pdf.cell(0, 10, "4. Bemerkungen", ln=True)
+        pdf.cell(0, 8, "4. Bemerkungen", ln=True)
         pdf.set_font("helvetica", "", 10)
         pdf.multi_cell(190, 8, u(data["remarks"]), border=1)
 
-    # 5. Schäden
-    dmg = data["condition_data"].get("damage_records", [])
-    if dmg:
-        pdf.ln(5)
-        pdf.set_font("helvetica", "B", 12)
-        pdf.cell(0, 10, "5. Erfasste Schäden", ln=True)
-        pdf.set_font("helvetica", "B", 9)
-        pdf.cell(60, 7, "Position", border=1)
-        pdf.cell(60, 7, "Art", border=1)
-        pdf.cell(70, 7, u("Intensität"), border=1, ln=True)
-        pdf.set_font("helvetica", "", 9)
-        for d in dmg:
-            pdf.cell(60, 7, u(d["pos"]), border=1)
-            pdf.cell(60, 7, u(d["type"]), border=1)
-            pdf.cell(70, 7, u(d["int"]), border=1, ln=True)
+    # ── 5. Fotos ─────────────────────────────────────────────────────────────
+    # Alle Fahrzeugfotos vorab parallel herunterladen
+    RUNDUMBLICK = ["vorne", "hinten", "links", "rechts", "schein"]
+    schaden_labels = [lbl for lbl in photos if lbl.startswith("schaden") and photos[lbl]]
 
-    # 6. Fotos
-    photos = data["condition_data"].get("photos", {})
+    rundumblick_items = [(lbl, photos[lbl]) for lbl in RUNDUMBLICK if photos.get(lbl)]
+    schaden_items     = [(lbl, photos[lbl]) for lbl in schaden_labels]
 
-    # Feste Reihenfolge: Rundumblick zuerst, dann Schein, dann Schadensfotos
-    PHOTO_ORDER = ["vorne", "links", "rechts", "hinten", "schein"]
-    ordered_labels = (
-        [lbl for lbl in PHOTO_ORDER if lbl in photos and photos[lbl]]
-        + [lbl for lbl in photos if lbl not in PHOTO_ORDER and lbl != "signature" and photos[lbl]]
-    )
-    vehicle_photo_items = [(lbl, photos[lbl]) for lbl in ordered_labels]
+    all_photo_items = rundumblick_items + schaden_items
+    if all_photo_items:
+        fetched_map = dict(_fetch_photos_parallel(all_photo_items))
+    else:
+        fetched_map = {}
 
-    if vehicle_photo_items:
+    # ── Foto-Seite: festes 2-Spalten-Layout ─────────────────────────────────
+    #
+    #  Spalte 1 (x=10)   │  Spalte 2 (x=108)
+    #  ───────────────────┼──────────────────
+    #  Zeile 1: Vorne     │  Hinten          ← Hochformat, max 110mm hoch
+    #  Zeile 2: Links     │  Rechts          ← Querformat, max 65mm hoch
+    #  Zeile 3:  –        │  Schein          ← Querformat, max 65mm hoch
+    #
+    # WICHTIG: pdf.image() IMMER nur mit w= (nie h=) → kein Verzerren!
+    # Die tatsächliche Renderhöhe wird via _get_photo_display_size() berechnet.
+
+    COL_X       = [10.0, 108.0]
+    COL_W       = 87.0
+    LABEL_H     = 7.0
+    GAP         = 4.0
+    PORT_MAX_H  = 110.0   # Hochformat-Slot (Vorne / Hinten)
+    LAND_MAX_H  = 65.0    # Querformat-Slot (Links / Rechts / Schein)
+    HEADER_Y    = 20.0
+
+    # y-Startpositionen der drei Zeilen
+    ROW_Y = [
+        HEADER_Y,                                           # Zeile 1
+        HEADER_Y + PORT_MAX_H  + LABEL_H + GAP,            # Zeile 2
+        HEADER_Y + PORT_MAX_H  + LABEL_H + GAP
+               + LAND_MAX_H   + LABEL_H + GAP,             # Zeile 3
+    ]
+
+    # Slot-Definitionen: (label, col_index, row_index, max_h)
+    SLOTS = [
+        ("vorne",  0, 0, PORT_MAX_H),
+        ("hinten", 1, 0, PORT_MAX_H),
+        ("links",  0, 1, LAND_MAX_H),
+        ("rechts", 1, 1, LAND_MAX_H),
+        ("schein", 1, 2, LAND_MAX_H),
+    ]
+
+    # Nur Seite hinzufügen wenn mindestens ein Rundumblick-Foto vorhanden
+    if any(fetched_map.get(lbl) for lbl, *_ in SLOTS):
         pdf.add_page()
         pdf.set_font("helvetica", "B", 12)
-        pdf.cell(0, 10, "6. Fotodokumentation", ln=True)
+        pdf.set_xy(10, 10)
+        pdf.cell(0, 8, "5. Fotodokumentation", ln=True)
 
-        # Layout-Konstanten
-        # Zwei Spalten, je 90mm breit, 10mm Abstand dazwischen
-        COL_X      = [10, 108]   # x-Start der zwei Spalten
-        COL_W      = 87          # nutzbare Breite pro Spalte (mm)
-        MAX_H      = 130         # maximale Foto-Höhe (mm) — Portrait passt vollständig rein
-        LABEL_H    = 7           # Platz für Beschriftung (mm)
-        ROW_GAP    = 5           # Abstand zwischen Zeilen (mm)
-        PAGE_BOTTOM = 270        # untere Seitengrenze (mm)
-        HEADER_Y   = 25          # y-Start nach Seitenüberschrift
+        LABEL_NAMES = {
+            "vorne": "Vorne", "hinten": "Hinten",
+            "links": "Links", "rechts": "Rechts", "schein": "Fahrzeugschein",
+        }
 
-        fetched = _fetch_photos_parallel(vehicle_photo_items)
+        for label, col_idx, row_idx, max_h in SLOTS:
+            img_bytes = fetched_map.get(label)
+            if not img_bytes:
+                continue
 
-        # Zeilen aufbauen: je 2 Fotos pro Zeile
-        rows = [fetched[i:i + 2] for i in range(0, len(fetched), 2)]
-        y_pos = HEADER_Y
+            x     = COL_X[col_idx]
+            y     = ROW_Y[row_idx]
+            disp_w, disp_h = _get_photo_display_size(img_bytes, COL_W, max_h)
 
-        for row in rows:
-            # Für jedes Foto in der Zeile: Seitenverhältnis ermitteln
-            row_photos = []  # (label, img_bytes, display_w, display_h)
-            for label, img_bytes in row:
-                if not img_bytes:
-                    row_photos.append((label, None, COL_W, 60))
-                    continue
-                try:
-                    pil_img = Image.open(io.BytesIO(img_bytes))
-                    img_w, img_h = pil_img.size
+            # Horizontal in der Spalte zentrieren
+            x_img = x + (COL_W - disp_w) / 2
 
-                    # EXIF-Rotation berücksichtigen
-                    try:
-                        from PIL import ImageOps
-                        pil_img = ImageOps.exif_transpose(pil_img)
-                        img_w, img_h = pil_img.size
-                    except Exception:
-                        pass
-
-                    aspect = img_h / img_w  # > 1 = Hochformat, < 1 = Querformat
-
-                    # Erst auf Breite skalieren, dann auf Max-Höhe begrenzen
-                    display_w = COL_W
-                    display_h = display_w * aspect
-                    if display_h > MAX_H:
-                        display_h = MAX_H
-                        display_w = display_h / aspect
-
-                    row_photos.append((label, img_bytes, display_w, display_h))
-                except Exception:
-                    row_photos.append((label, img_bytes, COL_W, 60))
-
-            # Höhe der gesamten Zeile = höchstes Foto + Label
-            row_h = max(ph[3] for ph in row_photos) + LABEL_H + ROW_GAP
-
-            # Neue Seite falls nötig
-            if y_pos + row_h > PAGE_BOTTOM:
-                pdf.add_page()
-                y_pos = 15
-
-            # Fotos der Zeile platzieren
-            for col_idx, (label, img_bytes, display_w, display_h) in enumerate(row_photos):
-                x = COL_X[col_idx]
-                # Foto horizontal zentrieren in der Spalte
-                x_img = x + (COL_W - display_w) / 2
-
-                if img_bytes:
-                    try:
-                        pdf.image(io.BytesIO(img_bytes), x=x_img, y=y_pos, w=display_w, h=display_h)
-                    except Exception:
-                        pass
-
-                # Beschriftung unter dem Foto (linksbündig an Spalte)
-                label_display = {
-                    "vorne": "Vorne", "hinten": "Hinten",
-                    "links": "Links", "rechts": "Rechts", "schein": "Fahrzeugschein",
-                }.get(label, label.replace("_", " ").capitalize())
-
-                pdf.set_font("helvetica", "I", 8)
-                pdf.set_xy(x, y_pos + display_h + 1)
-                pdf.cell(COL_W, LABEL_H - 2, label_display, align="C")
-
-            y_pos += row_h
-
-    # 7. Unterschrift
-    if photos.get("signature"):
-        if pdf.get_y() > 220:
-            pdf.add_page()
-        pdf.ln(10)
-        pdf.set_font("helvetica", "B", 12)
-        pdf.cell(0, 10, u("7. Bestätigung & Unterschrift"), ln=True)
-        sig_bytes = _fetch_image_bytes(photos["signature"])
-        if sig_bytes:
             try:
-                pdf.image(io.BytesIO(sig_bytes), w=60)
+                # NUR w= übergeben – FPDF berechnet h automatisch korrekt
+                pdf.image(io.BytesIO(img_bytes), x=x_img, y=y, w=disp_w)
             except Exception:
                 pass
+
+            # Beschriftung direkt unter dem tatsächlich gerenderten Bild
+            pdf.set_font("helvetica", "I", 8)
+            pdf.set_xy(x, y + disp_h + 1)
+            pdf.cell(COL_W, LABEL_H - 2, LABEL_NAMES.get(label, label.capitalize()), align="C")
+
+    # ── 6. Schäden (Text + Fotos) auf neuer Seite ────────────────────────────
+    dmg = data["condition_data"].get("damage_records", [])
+    if dmg or schaden_items:
+        pdf.add_page()
+        pdf.set_font("helvetica", "B", 12)
+        pdf.cell(0, 10, u("6. Erfasste Schäden"), ln=True)
+
+        if dmg:
+            pdf.set_font("helvetica", "B", 9)
+            pdf.cell(60, 7, "Position", border=1)
+            pdf.cell(60, 7, "Art", border=1)
+            pdf.cell(70, 7, u("Intensität"), border=1, ln=True)
+            pdf.set_font("helvetica", "", 9)
+            for d in dmg:
+                pdf.cell(60, 7, u(d["pos"]), border=1)
+                pdf.cell(60, 7, u(d["type"]), border=1)
+                pdf.cell(70, 7, u(d["int"]), border=1, ln=True)
+
+        # Schadensfotos in 2er-Raster unter der Tabelle
+        if schaden_items:
+            pdf.ln(6)
+            pdf.set_font("helvetica", "B", 10)
+            pdf.cell(0, 8, "Schadensfotos:", ln=True)
+
+            s_COL_X = [10.0, 108.0]
+            s_COL_W = 87.0
+            s_MAX_H = 100.0
+            s_col   = 0
+            s_y     = pdf.get_y() + 2
+
+            fetched_schaden = _fetch_photos_parallel(schaden_items)
+            for label, img_bytes in fetched_schaden:
+                if not img_bytes:
+                    continue
+                disp_w, disp_h = _get_photo_display_size(img_bytes, s_COL_W, s_MAX_H)
+                x_img = s_COL_X[s_col] + (s_COL_W - disp_w) / 2
+
+                # Neue Seite wenn nötig
+                if s_y + disp_h + 10 > 275:
+                    pdf.add_page()
+                    s_y = 15
+                    s_col = 0
+
+                try:
+                    pdf.image(io.BytesIO(img_bytes), x=x_img, y=s_y, w=disp_w)
+                except Exception:
+                    pass
+
+                pdf.set_font("helvetica", "I", 8)
+                pdf.set_xy(s_COL_X[s_col], s_y + disp_h + 1)
+                pdf.cell(s_COL_W, 6, label.replace("_", " ").capitalize(), align="C")
+
+                s_col += 1
+                if s_col > 1:
+                    s_col = 0
+                    s_y += max(disp_h, s_MAX_H) + 10
 
     return bytes(pdf.output())
 
@@ -595,19 +662,19 @@ with tab1:
     old_cl = st.session_state.edit_data["condition_data"].get("checkliste", {}) if is_edit else {}
     c1, c2 = st.columns(2)
     with c1:
-        c_floor  = st.toggle("Boden sauber",     old_cl.get("floor",         True))
-        c_seats  = st.toggle("Sitze sauber",      old_cl.get("seats",         True))
-        c_covers = st.toggle("Einstiege",         old_cl.get("entry",         True))
-        c_instr  = st.toggle("Armaturen",         old_cl.get("instruments",   True))
-        c_trunk  = st.toggle("Kofferraum sauber", old_cl.get("trunk",         True))
-        c_engine = st.toggle("Motorraum",         old_cl.get("engine",        True))
+        c_floor  = st.toggle("Boden sauber",     old_cl.get("floor",         False))
+        c_seats  = st.toggle("Sitze sauber",      old_cl.get("seats",         False))
+        c_covers = st.toggle("Einstiege",         old_cl.get("entry",         False))
+        c_instr  = st.toggle("Armaturen",         old_cl.get("instruments",   False))
+        c_trunk  = st.toggle("Kofferraum sauber", old_cl.get("trunk",         False))
+        c_engine = st.toggle("Motorraum",         old_cl.get("engine",        False))
     with c2:
-        z_aid    = st.toggle("Verbandskasten",    old_cl.get("aid_kit",       True))
-        z_tri    = st.toggle("Warndreieck",       old_cl.get("triangle",      True))
-        z_vest   = st.toggle("Warnweste",         old_cl.get("vest",          True))
-        z_cable  = st.toggle("Ladekabel",         old_cl.get("cable",         True))
-        z_reg    = st.toggle("Fahrzeugschein",    old_cl.get("registration",  True))
-        z_card   = st.toggle("Ladekarte",         old_cl.get("card",          True))
+        z_aid    = st.toggle("Verbandskasten",    old_cl.get("aid_kit",       False))
+        z_tri    = st.toggle("Warndreieck",       old_cl.get("triangle",      False))
+        z_vest   = st.toggle("Warnweste",         old_cl.get("vest",          False))
+        z_cable  = st.toggle("Ladekabel",         old_cl.get("cable",         False))
+        z_reg    = st.toggle("Fahrzeugschein",    old_cl.get("registration",  False))
+        z_card   = st.toggle("Ladekarte",         old_cl.get("card",          False))
 
     # ── Füllstände ──────────────────────────────────────────────────────────
     st.header("4. Füllstände")
