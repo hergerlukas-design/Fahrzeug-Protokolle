@@ -1,4 +1,3 @@
-
 import streamlit as st
 from supabase import create_client, Client
 from streamlit_drawable_canvas import st_canvas
@@ -21,29 +20,6 @@ key: str = st.secrets["SUPABASE_KEY"]
 supabase: Client = create_client(url, key)
 
 st.set_page_config(page_title="Vehicle Protocol Pro", layout="wide", page_icon="🚗")
-
-# Sticky Tabs CSS + Floating Button
-st.markdown("""
-    <style>
-        div[data-testid="stTabs"] > div:first-child {
-            position: fixed;
-            top: 0;
-            left: 0;
-            right: 0;
-            background-color: var(--default-backgroundColor);
-            z-index: 999;
-            padding: 10px 1rem 0 1rem;
-            border-bottom: 1px solid rgba(128, 128, 128, 0.2);
-        }
-
-        /* Abstand damit der Inhalt nicht unter den fixierten Tabs verschwindet */
-        div[data-testid="stTabs"] > div:last-child {
-            margin-top: 50px;
-        }
-
-        .float-btn-placeholder {}
-    </style>
-""", unsafe_allow_html=True)
 
 tab1, tab2 = st.tabs(["📝 Protokoll erstellen / Bearbeiten", "🔍 Archiv & Verwaltung"])
 
@@ -931,4 +907,3 @@ with tab2:
                     if st.button("Löschen", key=f"d_{r['id']}"):
                         st.session_state[confirm_key] = True
                         st.rerun()
-
