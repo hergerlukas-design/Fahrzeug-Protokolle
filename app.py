@@ -61,6 +61,7 @@ def render_header_with_logo(title_text: str):
         with open(logo_pfad, "rb") as img_file:
             b64_string = base64.b64encode(img_file.read()).decode()
         
+        # LOGO EDITOR
         # HTML & CSS: 'display: flex' hält beides zwingend in einer Zeile
         # 'align-items: center' zentriert beides exakt auf derselben horizontalen Linie
         # 'justify-content: space-between' schiebt den Text nach links und das Logo nach rechts (wie Spalten)
