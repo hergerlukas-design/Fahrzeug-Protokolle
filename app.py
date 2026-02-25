@@ -298,6 +298,10 @@ class UnicodePDF(FPDF):
         self.set_fill_color(219, 50, 62) #Farbe R,G,B
         self.rect( 204, 150, 6, 147, style="F") #abstand (von links, von oben, breite, länge)
 
+         # Grauer Streifen oben
+        self.set_fill_color( 63, 63, 63) #Farbe R,G,B
+        self.rect( 6, 0, 6, 100, style="F") #abstand (von links, von oben, breite, länge)
+
 
 def _prepare_image_bytes(img_bytes: bytes) -> bytes:
     """
