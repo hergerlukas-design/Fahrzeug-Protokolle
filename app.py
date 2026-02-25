@@ -77,31 +77,60 @@ def sanitize_filename(text: str) -> str:
     return re.sub(r"[^a-zA-Z0-9_\-]", "", text)
 
 
+def compress_image(data: bytes, max_size_mb: float = MAX_UPLOAD_SIZE_MB, quality: int = 85) -> bytes:
+    """Komprimiert ein Bild schrittweise bis es unter max_size_mb liegt."""
+    img = Image.open(io.BytesIO(data))
+    # EXIF-Rotation korrigieren (Handyfotos)
+    try:
+        from PIL import ImageOps
+        img = ImageOps.exif_transpose(img)
+    except Exception:
+        pass
+    # In RGB konvertieren falls nötig (z.B. RGBA PNG)
+    if img.mode in ("RGBA", "P"):
+        img = img.convert("RGB")
+    # Maximal 2000px – reicht für Protokolle
+    img.thumbnail((2000, 2000), Image.LANCZOS)
+    current_quality = quality
+    while current_quality >= 40:
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=current_quality, optimize=True)
+        if buf.tell() / (1024 * 1024) <= max_size_mb:
+            return buf.getvalue()
+        current_quality -= 15
+    # Letzter Versuch mit kleinster Auflösung
+    img.thumbnail((1000, 1000), Image.LANCZOS)
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG", quality=40, optimize=True)
+    return buf.getvalue()
+
+
 def upload_photo(file, folder_path: str, p_type: str, is_pil: bool = False) -> str | None:
-    """Lädt ein Foto nach Supabase Storage hoch und gibt die öffentliche URL zurück."""
+    """Lädt ein Foto nach Supabase Storage hoch und gibt die öffentliche URL zurück.
+    Nicht-PIL-Fotos werden automatisch komprimiert falls nötig."""
     if file is None:
         return None
-
-    # FIX (Sicherheit): Dateigröße prüfen
-    if not is_pil:
-        size_mb = len(file.getvalue()) / (1024 * 1024)
-        if size_mb > MAX_UPLOAD_SIZE_MB:
-            st.error(f"Datei für '{p_type}' zu groß: {size_mb:.1f} MB (Max: {MAX_UPLOAD_SIZE_MB} MB)")
-            return None
-
     try:
         clean_parts = [sanitize_filename(part) for part in folder_path.split("/")]
         clean_folder = "/".join(clean_parts)
 
-        ext = "png" if is_pil else "jpg"
-        path = f"{clean_folder}/{datetime.date.today()}_{p_type}_{uuid.uuid4().hex[:5]}.{ext}"
-
         if is_pil:
+            ext = "png"
+            path = f"{clean_folder}/{datetime.date.today()}_{p_type}_{uuid.uuid4().hex[:5]}.{ext}"
             img_byte_arr = io.BytesIO()
             file.save(img_byte_arr, format="PNG")
             content = img_byte_arr.getvalue()
         else:
-            content = file.getvalue()
+            raw = file.getvalue()
+            size_mb = len(raw) / (1024 * 1024)
+            if size_mb > MAX_UPLOAD_SIZE_MB:
+                st.info(f"📸 '{p_type}': {size_mb:.1f} MB → wird komprimiert...")
+                content = compress_image(raw)
+                st.info(f"✅ '{p_type}' komprimiert auf {len(content)/(1024*1024):.1f} MB")
+            else:
+                content = raw
+            ext = "jpg"
+            path = f"{clean_folder}/{datetime.date.today()}_{p_type}_{uuid.uuid4().hex[:5]}.{ext}"
 
         supabase.storage.from_("vehicle-photos").upload(path, content)
         return supabase.storage.from_("vehicle-photos").get_public_url(path)
@@ -195,7 +224,6 @@ def build_payload(
         "odometer": odometer,
         "fuel_level": fuel_level,
         "remarks": remarks,
-        # FIX (Qualität): ISO-Timestamp statt formatiertem String
         "inspection_date": datetime.datetime.now().isoformat(),
         "condition_data": {
             "battery": battery,
@@ -424,7 +452,7 @@ with tab1:
         s_val = st.session_state.edit_data["location"] if is_edit else ""
         standort = st.text_input("Standort", value=s_val)
 
-        # FIX (Qualität): nur als Anzeige – echter Timestamp wird beim Speichern als ISO gesetzt
+        # FIX (Qualität): Datum nur als Anzeige – Supabase setzt created_at automatisch
         st.text_input("Datum", value=datetime.datetime.now().strftime("%d.%m.%Y %H:%M"), disabled=True)
 
     # ── Sichtprüfung & Fotos ────────────────────────────────────────────────
@@ -728,4 +756,3 @@ with tab2:
                     if st.button("Löschen", key=f"d_{r['id']}"):
                         st.session_state[confirm_key] = True
                         st.rerun()
-                        
