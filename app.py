@@ -6,6 +6,7 @@ import io
 import datetime
 import uuid
 import requests
+import re  # ---> FIX: Import für die Textbereinigung
 from fpdf import FPDF
 
 # --- 1. SETUP ---
@@ -15,7 +16,7 @@ supabase: Client = create_client(url, key)
 
 st.set_page_config(page_title="Vehicle Protocol Pro", layout="wide", page_icon="🚗")
 
-# ---> FIX: Sticky Tabs CSS für Dark & Light Mode optimiert
+# --- Sticky Tabs CSS ---
 st.markdown("""
     <style>
         div[data-testid="stTabs"] > div:first-child {
@@ -32,6 +33,22 @@ st.markdown("""
 tab1, tab2 = st.tabs(["📝 Protokoll erstellen / Bearbeiten", "🔍 Archiv & Verwaltung"])
 
 # --- 2. HILFSFUNKTIONEN ---
+
+# ---> FIX: Funktion zum Bereinigen von Dateipfaden (verhindert den InvalidKey Fehler)
+def sanitize_filename(text):
+    if not text:
+        return "unbekannt"
+    # Umlaute und Sonderzeichen ersetzen
+    replacements = {
+        "ä": "ae", "ö": "oe", "ü": "ue", "Ä": "Ae", "Ö": "Oe", "Ü": "Ue", "ß": "ss",
+        "&": "_and_", " ": "_"
+    }
+    for char, replacement in replacements.items():
+        text = text.replace(char, replacement)
+    # Nur Buchstaben, Zahlen, Unterstriche und Bindestriche erlauben
+    text = re.sub(r'[^a-zA-Z0-9_\-]', '', text)
+    return text
+
 def upload_photo(file, folder, p_type, is_pil=False):
     if file is None: return None
     try:
@@ -156,7 +173,6 @@ def create_pdf(data):
         pdf.set_font("helvetica", "B", 12)
         pdf.cell(0, 10, "7. Bestätigung & Unterschrift", ln=True)
         try:
-            # ---> FIX: Timeout hinzugefügt
             sig_data = requests.get(photos["signature"], timeout=10).content
             pdf.image(io.BytesIO(sig_data), w=60)
         except: pass
@@ -170,7 +186,6 @@ with tab1:
         st.warning(f"⚠️ Bearbeitungsmodus: {st.session_state.edit_data['vehicles']['license_plate']}")
         if st.button("Abbrechen"): 
             del st.session_state["edit_id"]
-            # ---> FIX: Auch edit_data löschen
             if "edit_data" in st.session_state: del st.session_state["edit_data"]
             st.rerun()
     
@@ -178,7 +193,6 @@ with tab1:
     
     st.header("1. Basisdaten")
     projekte = get_projects()
-    # ---> FIX: Toter Code/Variable entfernt
     auswahl_p = st.selectbox("Projekt", ["-- Neues Projekt erstellen --"] + projekte)
     p_name = st.text_input("Projektname") if auswahl_p == "-- Neues Projekt erstellen --" else auswahl_p
     
@@ -198,7 +212,6 @@ with tab1:
         datum_zeit = st.text_input("Datum", value=datetime.datetime.now().strftime("%d.%m.%Y %H:%M"))
 
     st.header("2. Sichtprüfung & Schadenserfassung")
-    # ---> FIX: Bedingungen beim Bearbeiten vorauswählen
     erschwert_val = st.session_state.edit_data['condition_data'].get('conditions', []) if is_edit else []
     erschwert = st.multiselect("Bedingungen", ["Verschmutzung", "Regen", "Dunkelheit", "Schlechtes Licht"], default=erschwert_val)
     
@@ -213,7 +226,6 @@ with tab1:
         f_r = st.file_uploader("Rechts", type=['jpg','png'])
 
     st.subheader("🛠️ Schäden erfassen")
-    # ---> FIX: Bestehende Schadensanzahl beim Bearbeiten laden
     if "damage_count" not in st.session_state:
         if is_edit:
             st.session_state.damage_count = len(st.session_state.edit_data['condition_data'].get('damage_records', []))
@@ -223,11 +235,9 @@ with tab1:
     if st.button("+ Neuen Schaden hinzufügen"): st.session_state.damage_count += 1
 
     damage_records, d_files = [], {}
-    # ---> FIX: Bestehende Schadensdaten laden
     old_dmgs = st.session_state.edit_data['condition_data'].get('damage_records', []) if is_edit else []
     
     for i in range(st.session_state.damage_count):
-        # Default Werte für den Schaden, falls vorhanden
         d_val = old_dmgs[i] if i < len(old_dmgs) else {"pos": "Stoßfänger vorne", "type": "Kratzer", "int": "Oberflächlich"}
         
         with st.expander(f"Schaden #{i+1}", expanded=True):
@@ -250,7 +260,6 @@ with tab1:
     old_cl = st.session_state.edit_data['condition_data'].get('checkliste', {}) if is_edit else {}
     c1, c2 = st.columns(2)
     with c1:
-        # ---> FIX: Alle Toggles mit old_cl verknüpft
         c_floor = st.toggle("Boden sauber", old_cl.get('floor', True))
         c_seats = st.toggle("Sitze sauber", old_cl.get('seats', True))
         c_covers = st.toggle("Einstiege", old_cl.get('entry', True))
@@ -266,7 +275,6 @@ with tab1:
         z_card = st.toggle("Ladekarte", old_cl.get('card', True))
 
     st.header("4. Füllstände")
-    # ---> FIX: Slider & Kilometer beim Bearbeiten vorausfüllen
     f_lvl = st.session_state.edit_data['fuel_level'] if is_edit else 50
     fuel = st.slider("Kraftstoff %", 0, 100, f_lvl)
     b_lvl = st.session_state.edit_data['condition_data'].get('battery', 100) if is_edit else 100
@@ -289,9 +297,12 @@ with tab1:
                     p_id = supabase.table("projects").select("id").eq("name", p_name).execute().data[0]['id']
                     v_res = supabase.table("vehicles").upsert({"project_id": p_id, "license_plate": kennzeichen, "brand_model": hersteller, "vin": vin}, on_conflict="license_plate").execute()
                     v_id = v_res.data[0]['id']
-                    path = f"{p_name}/{kennzeichen}"
                     
-                    # ---> FIX: Sichere Zusammenführung der Fotos
+                    # ---> FIX: Bereinigung der Ordnernamen für den Cloud-Speicher
+                    safe_p_name = sanitize_filename(p_name)
+                    safe_kennzeichen = sanitize_filename(kennzeichen)
+                    path = f"{safe_p_name}/{safe_kennzeichen}"
+                    
                     final_urls = st.session_state.edit_data['condition_data'].get('photos', {}) if is_edit else {}
                     for k, f in [("vorne",f_v),("hinten",f_h),("links",f_l),("rechts",f_r),("schein",f_s)]:
                         if f: final_urls[k] = upload_photo(f, path, k)
@@ -304,7 +315,6 @@ with tab1:
                     
                     if is_edit: 
                         supabase.table("protocols").update(payload).eq("id", st.session_state.edit_id).execute()
-                        # ---> FIX: Session State nach Update bereinigen
                         del st.session_state["edit_id"]
                         if "edit_data" in st.session_state: del st.session_state["edit_data"]
                     else: 
@@ -366,4 +376,4 @@ with tab2:
                     else:
                         if st.button("Löschen", key=f"d_{r['id']}"):
                             st.session_state[confirm_key] = True; st.rerun()
-                 
+            
