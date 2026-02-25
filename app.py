@@ -274,28 +274,43 @@ class UnicodePDF(FPDF):
     pass
 
 
-def _get_photo_display_size(img_bytes: bytes, max_w: float, max_h: float) -> tuple[float, float]:
+def _prepare_image_bytes(img_bytes: bytes) -> bytes:
     """
-    Berechnet die Anzeigegröße eines Fotos unter Beibehaltung des Seitenverhältnisses.
-    WICHTIG: pdf.image() wird immer NUR mit w= aufgerufen (nie h=), sonst verzerrt FPDF.
-    Diese Funktion gibt die tatsächlich gerenderte (w, h) zurück für Positionsberechnungen.
+    Wendet EXIF-Rotation an und gibt korrigierte JPEG-Bytes zurück.
+    FPDF versteht kein EXIF – ohne diesen Schritt erscheinen Handyfotos gedreht.
     """
     try:
         from PIL import ImageOps
         pil_img = Image.open(io.BytesIO(img_bytes))
-        pil_img = ImageOps.exif_transpose(pil_img)   # EXIF-Rotation korrigieren
+        pil_img = ImageOps.exif_transpose(pil_img)   # Rotation aus EXIF anwenden
+        if pil_img.mode in ("RGBA", "P"):
+            pil_img = pil_img.convert("RGB")
+        buf = io.BytesIO()
+        pil_img.save(buf, format="JPEG", quality=90)
+        return buf.getvalue()
+    except Exception:
+        return img_bytes  # Fallback: Original zurückgeben
+
+
+def _get_photo_display_size(img_bytes: bytes, max_w: float, max_h: float) -> tuple[float, float]:
+    """
+    Berechnet die Anzeigegröße eines (bereits EXIF-korrigierten) Fotos.
+    WICHTIG: pdf.image() wird immer NUR mit w= aufgerufen (nie h=), sonst verzerrt FPDF.
+    """
+    try:
+        pil_img = Image.open(io.BytesIO(img_bytes))
         orig_w, orig_h = pil_img.size
     except Exception:
         return max_w, max_h
 
     # Erst auf max_w begrenzen
-    scale = max_w / orig_w
+    scale  = max_w / orig_w
     disp_w = max_w
     disp_h = orig_h * scale
 
     # Falls zu hoch: auf max_h begrenzen und Breite anpassen
     if disp_h > max_h:
-        scale = max_h / orig_h
+        scale  = max_h / orig_h
         disp_h = max_h
         disp_w = orig_w * scale
 
@@ -342,9 +357,10 @@ def create_pdf(data: dict) -> bytes:
     # Unterschrift-Bild einfügen (nur w=, kein h= → kein Verzerren)
     if sig_bytes:
         try:
-            sig_disp_w, sig_disp_h = _get_photo_display_size(sig_bytes, SIG_W, SIG_BOX_H - 6)
+            sig_prepared = _prepare_image_bytes(sig_bytes)
+            sig_disp_w, sig_disp_h = _get_photo_display_size(sig_prepared, SIG_W, SIG_BOX_H - 6)
             sig_img_x = SIG_X + (SIG_W - sig_disp_w) / 2
-            pdf.image(io.BytesIO(sig_bytes), x=sig_img_x, y=SIG_Y + 10, w=sig_disp_w)
+            pdf.image(io.BytesIO(sig_prepared), x=sig_img_x, y=SIG_Y + 10, w=sig_disp_w)
         except Exception:
             pass
     # Rahmen um Unterschrift-Box
@@ -414,27 +430,30 @@ def create_pdf(data: dict) -> bytes:
     #
     #  Spalte 1 (x=10)   │  Spalte 2 (x=108)
     #  ───────────────────┼──────────────────
-    #  Zeile 1: Vorne     │  Hinten          ← Hochformat, max 110mm hoch
-    #  Zeile 2: Links     │  Rechts          ← Querformat, max 65mm hoch
-    #  Zeile 3:  –        │  Schein          ← Querformat, max 65mm hoch
+    #  Zeile 1: Vorne     │  Hinten          ← Hochformat, max 95mm hoch
+    #  Zeile 2: Links     │  Rechts          ← Querformat, max 58mm hoch
+    #  Zeile 3:  –        │  Schein          ← Querformat, max 58mm hoch
     #
-    # WICHTIG: pdf.image() IMMER nur mit w= (nie h=) → kein Verzerren!
-    # Die tatsächliche Renderhöhe wird via _get_photo_display_size() berechnet.
+    # Seitenrechnung (A4 nutzbar ~275mm):
+    #   HEADER_Y=20 + 95+7+4 + 58+7+4 + 58+7 = 260mm ✓
+    #
+    # WICHTIG: Alle Bytes zuerst via _prepare_image_bytes() EXIF-korrigieren,
+    # dann pdf.image() NUR mit w= aufrufen → kein Verzerren, kein Rotieren!
 
     COL_X       = [10.0, 108.0]
     COL_W       = 87.0
     LABEL_H     = 7.0
     GAP         = 4.0
-    PORT_MAX_H  = 110.0   # Hochformat-Slot (Vorne / Hinten)
-    LAND_MAX_H  = 65.0    # Querformat-Slot (Links / Rechts / Schein)
+    PORT_MAX_H  = 95.0    # Hochformat-Slot (Vorne / Hinten)
+    LAND_MAX_H  = 58.0    # Querformat-Slot (Links / Rechts / Schein)
     HEADER_Y    = 20.0
 
     # y-Startpositionen der drei Zeilen
     ROW_Y = [
-        HEADER_Y,                                           # Zeile 1
-        HEADER_Y + PORT_MAX_H  + LABEL_H + GAP,            # Zeile 2
-        HEADER_Y + PORT_MAX_H  + LABEL_H + GAP
-               + LAND_MAX_H   + LABEL_H + GAP,             # Zeile 3
+        HEADER_Y,                                              # Zeile 1: 20
+        HEADER_Y + PORT_MAX_H + LABEL_H + GAP,                # Zeile 2: 126
+        HEADER_Y + PORT_MAX_H + LABEL_H + GAP
+               + LAND_MAX_H  + LABEL_H + GAP,                 # Zeile 3: 195
     ]
 
     # Slot-Definitionen: (label, col_index, row_index, max_h)
@@ -459,12 +478,15 @@ def create_pdf(data: dict) -> bytes:
         }
 
         for label, col_idx, row_idx, max_h in SLOTS:
-            img_bytes = fetched_map.get(label)
-            if not img_bytes:
+            raw_bytes = fetched_map.get(label)
+            if not raw_bytes:
                 continue
 
-            x     = COL_X[col_idx]
-            y     = ROW_Y[row_idx]
+            # EXIF-Rotation auf die tatsächlichen Bytes anwenden
+            img_bytes = _prepare_image_bytes(raw_bytes)
+
+            x          = COL_X[col_idx]
+            y          = ROW_Y[row_idx]
             disp_w, disp_h = _get_photo_display_size(img_bytes, COL_W, max_h)
 
             # Horizontal in der Spalte zentrieren
@@ -512,9 +534,11 @@ def create_pdf(data: dict) -> bytes:
             s_y     = pdf.get_y() + 2
 
             fetched_schaden = _fetch_photos_parallel(schaden_items)
-            for label, img_bytes in fetched_schaden:
-                if not img_bytes:
+            for label, raw_bytes in fetched_schaden:
+                if not raw_bytes:
                     continue
+                # EXIF-Rotation korrigieren
+                img_bytes = _prepare_image_bytes(raw_bytes)
                 disp_w, disp_h = _get_photo_display_size(img_bytes, s_COL_W, s_MAX_H)
                 x_img = s_COL_X[s_col] + (s_COL_W - disp_w) / 2
 
