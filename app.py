@@ -3,6 +3,7 @@ from supabase import create_client, Client
 from streamlit_drawable_canvas import st_canvas
 from PIL import Image
 import io
+import base64
 import datetime
 import uuid
 import requests
@@ -52,6 +53,28 @@ CHECKLIST_JA_NEIN = {"aid_kit", "triangle", "vest", "cable", "registration", "ca
 # 3. HILFSFUNKTIONEN
 # ---------------------------------------------------------------------------
 
+def render_header_with_logo(title_text: str):
+    """Zeigt die Überschrift und das Logo exakt nebeneinander auf einer Höhe an."""
+    logo_pfad = "logo.png"
+    import os
+    if os.path.exists(logo_pfad):
+        with open(logo_pfad, "rb") as img_file:
+            b64_string = base64.b64encode(img_file.read()).decode()
+        
+        # HTML & CSS: 'display: flex' hält beides zwingend in einer Zeile
+        # 'align-items: center' zentriert beides exakt auf derselben horizontalen Linie
+        # 'justify-content: space-between' schiebt den Text nach links und das Logo nach rechts (wie Spalten)
+        html = f"""
+        <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: nowrap; margin-bottom: 25px;">
+            <h1 style="margin: 0; padding: 0; line-height: 1.2;">{title_text}</h1>
+            <img src="data:image/png;base64,{b64_string}" style="width: 70px; flex-shrink: 0;">
+        </div>
+        """
+        st.markdown(html, unsafe_allow_html=True)
+    else:
+        # Fallback, falls das Logo auf dem Server mal fehlen sollte
+        st.title(title_text)
+        
 def sanitize_filename(text: str) -> str:
     """Bereinigt Texte für den Speicherpfad (entfernt &, Leerzeichen, Umlaute)."""
     if not text:
@@ -590,12 +613,7 @@ with tab1:
             st.session_state.damage_count = 0
             st.rerun()
 
-    _t_col, _logo_col = st.columns([8, 1])
-    with _t_col:
-        st.title("Fahrzeug-Übergabe")
-    with _logo_col:
-        if os.path.exists(LOGO_PATH):
-            st.image(LOGO_PATH, width=70)
+    render_header_with_logo("Fahrzeug-Übergabe")
 
     # ── Basisdaten ──────────────────────────────────────────────────────────
     st.header("1. Basisdaten")
@@ -821,12 +839,7 @@ with tab1:
 # ---------------------------------------------------------------------------
 
 with tab2:
-    _t_col, _logo_col = st.columns([8, 1])
-    with _t_col:
-        st.title("Archiv & Verwaltung")
-    with _logo_col:
-        if os.path.exists(LOGO_PATH):
-            st.image(LOGO_PATH, width=70)
+    render_header_with_logo("Archiv & Verwaltung")
 
     search_q = st.text_input("Suche Kennzeichen").upper()
 
