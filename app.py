@@ -283,7 +283,7 @@ def _fetch_photos_parallel(photo_items: list[tuple[str, str]]) -> list[tuple[str
 
 import os
 
-LOGO_PATH = "logocarhandling.png"   # Logo-Datei im Repo-Root hinterlegen, ändert nur das PDF Logo
+LOGO_PATH = "carhandling.png"   # Logo-Datei im Repo-Root hinterlegen, ändert nur das PDF Logo
 CONTENT_TOP = 25.0       # y-Position ab der Inhalt beginnt – unterhalb des Logos
 
 class UnicodePDF(FPDF):
@@ -296,7 +296,7 @@ class UnicodePDF(FPDF):
                 pass
         # Roter Streifen unten rechts
         self.set_fill_color(219, 50, 62) #Farbe R,G,B
-        self.rect(196, 250, 6, 45, style="F") #abstand (von links, von oben, breite, länge)
+        self.rect( 204, 150, 6, 147, style="F") #abstand (von links, von oben, breite, länge)
 
 
 def _prepare_image_bytes(img_bytes: bytes) -> bytes:
