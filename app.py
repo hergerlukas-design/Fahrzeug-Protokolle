@@ -363,9 +363,6 @@ def create_pdf(data: dict) -> bytes:
             pdf.image(io.BytesIO(sig_prepared), x=sig_img_x, y=SIG_Y + 10, w=sig_disp_w)
         except Exception:
             pass
-    # Rahmen um Unterschrift-Box
-    pdf.rect(SIG_X, SIG_Y, SIG_W, SIG_BOX_H + 2)
-
     pdf.set_xy(10, 28)
 
     # ── 1. Basisdaten ────────────────────────────────────────────────────────
