@@ -21,7 +21,7 @@ supabase: Client = create_client(url, key)
 
 st.set_page_config(page_title="Vehicle Protocol Pro", layout="wide", page_icon="🚗")
 
-# Sticky Tabs CSS
+# Sticky Tabs CSS + Floating Button
 st.markdown("""
     <style>
         div[data-testid="stTabs"] > div:first-child {
@@ -32,7 +32,42 @@ st.markdown("""
             padding-top: 10px;
             border-bottom: 1px solid rgba(128, 128, 128, 0.2);
         }
+
+        .float-btn {
+            position: fixed;
+            bottom: 2rem;
+            right: 2rem;
+            z-index: 9999;
+            background-color: #ff4b4b;
+            color: white;
+            border: none;
+            border-radius: 50px;
+            padding: 0.65rem 1.2rem;
+            font-size: 0.9rem;
+            font-weight: 600;
+            cursor: pointer;
+            box-shadow: 0 4px 14px rgba(0,0,0,0.3);
+            transition: background-color 0.2s, transform 0.15s;
+            text-decoration: none;
+            display: flex;
+            align-items: center;
+            gap: 0.4rem;
+        }
+        .float-btn:hover {
+            background-color: #e03e3e;
+            transform: scale(1.05);
+        }
     </style>
+
+    <button class="float-btn" onclick="
+        window.scrollTo({top: 0, behavior: 'smooth'});
+        setTimeout(() => {
+            const tabs = window.parent.document.querySelectorAll('button[data-baseweb=tab]');
+            if (tabs.length >= 2) tabs[1].click();
+        }, 300);
+    ">
+        🔍 Archiv
+    </button>
 """, unsafe_allow_html=True)
 
 tab1, tab2 = st.tabs(["📝 Protokoll erstellen / Bearbeiten", "🔍 Archiv & Verwaltung"])
@@ -921,3 +956,4 @@ with tab2:
                     if st.button("Löschen", key=f"d_{r['id']}"):
                         st.session_state[confirm_key] = True
                         st.rerun()
+                        
