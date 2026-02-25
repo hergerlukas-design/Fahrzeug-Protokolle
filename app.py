@@ -442,18 +442,15 @@ def create_pdf(data: dict) -> bytes:
 
     COL_X       = [10.0, 108.0]
     COL_W       = 87.0
-    LABEL_H     = 7.0
     GAP         = 4.0
-    PORT_MAX_H  = 95.0    # Hochformat-Slot (Vorne / Hinten)
-    LAND_MAX_H  = 58.0    # Querformat-Slot (Links / Rechts / Schein)
+    PORT_MAX_H  = 95.0
+    LAND_MAX_H  = 58.0
     HEADER_Y    = 20.0
 
-    # y-Startpositionen der drei Zeilen
     ROW_Y = [
-        HEADER_Y,                                              # Zeile 1: 20
-        HEADER_Y + PORT_MAX_H + LABEL_H + GAP,                # Zeile 2: 126
-        HEADER_Y + PORT_MAX_H + LABEL_H + GAP
-               + LAND_MAX_H  + LABEL_H + GAP,                 # Zeile 3: 195
+        HEADER_Y,
+        HEADER_Y + PORT_MAX_H + GAP,
+        HEADER_Y + PORT_MAX_H + GAP + LAND_MAX_H + GAP,
     ]
 
     # Slot-Definitionen: (label, col_index, row_index, max_h)
@@ -472,36 +469,21 @@ def create_pdf(data: dict) -> bytes:
         pdf.set_xy(10, 10)
         pdf.cell(0, 8, "5. Fotodokumentation", ln=True)
 
-        LABEL_NAMES = {
-            "vorne": "Vorne", "hinten": "Hinten",
-            "links": "Links", "rechts": "Rechts", "schein": "Fahrzeugschein",
-        }
-
         for label, col_idx, row_idx, max_h in SLOTS:
             raw_bytes = fetched_map.get(label)
             if not raw_bytes:
                 continue
 
-            # EXIF-Rotation auf die tatsächlichen Bytes anwenden
             img_bytes = _prepare_image_bytes(raw_bytes)
-
-            x          = COL_X[col_idx]
-            y          = ROW_Y[row_idx]
+            x         = COL_X[col_idx]
+            y         = ROW_Y[row_idx]
             disp_w, disp_h = _get_photo_display_size(img_bytes, COL_W, max_h)
-
-            # Horizontal in der Spalte zentrieren
             x_img = x + (COL_W - disp_w) / 2
 
             try:
-                # NUR w= übergeben – FPDF berechnet h automatisch korrekt
                 pdf.image(io.BytesIO(img_bytes), x=x_img, y=y, w=disp_w)
             except Exception:
                 pass
-
-            # Beschriftung direkt unter dem tatsächlich gerenderten Bild
-            pdf.set_font("helvetica", "I", 8)
-            pdf.set_xy(x, y + disp_h + 1)
-            pdf.cell(COL_W, LABEL_H - 2, LABEL_NAMES.get(label, label.capitalize()), align="C")
 
     # ── 6. Schäden (Text + Fotos) auf neuer Seite ────────────────────────────
     dmg = data["condition_data"].get("damage_records", [])
@@ -552,10 +534,6 @@ def create_pdf(data: dict) -> bytes:
                     pdf.image(io.BytesIO(img_bytes), x=x_img, y=s_y, w=disp_w)
                 except Exception:
                     pass
-
-                pdf.set_font("helvetica", "I", 8)
-                pdf.set_xy(s_COL_X[s_col], s_y + disp_h + 1)
-                pdf.cell(s_COL_W, 6, label.replace("_", " ").capitalize(), align="C")
 
                 s_col += 1
                 if s_col > 1:
@@ -912,3 +890,4 @@ with tab2:
                     if st.button("Löschen", key=f"d_{r['id']}"):
                         st.session_state[confirm_key] = True
                         st.rerun()
+                        
