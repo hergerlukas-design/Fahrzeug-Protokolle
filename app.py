@@ -43,7 +43,7 @@ def get_projects():
     except: return []
 
 def create_pdf(data):
-    """Erstellt ein professionelles PDF inkl. Bemerkungen, Fotos und Unterschrift"""
+    """Erstellt ein professionelles PDF inkl. Bemerkungen, Fotos bei Schäden und Unterschrift"""
     pdf = FPDF()
     pdf.add_page()
     
@@ -95,7 +95,7 @@ def create_pdf(data):
             pdf.cell(95, 7, f"{uebersetzung.get(k2, k2)}: {'OK' if v2 else 'Nicht OK'}", border=1, ln=True)
         else: pdf.ln(7)
 
-    # NEU: 4. Bemerkungen
+    # 4. Bemerkungen
     if data.get('remarks'):
         pdf.ln(5)
         pdf.set_font("helvetica", "B", 12)
@@ -103,40 +103,71 @@ def create_pdf(data):
         pdf.set_font("helvetica", "", 10)
         pdf.multi_cell(190, 8, data['remarks'], border=1)
 
-    # 5. Schäden Tabelle
+    # 5. Schäden mit Fotos direkt dabei
     damage_list = data['condition_data'].get('damage_records', [])
+    photos = data['condition_data'].get('photos', {})
+    
     if damage_list:
         pdf.ln(5)
         pdf.set_font("helvetica", "B", 12)
-        pdf.cell(0, 10, "5. Erfasste Schäden", ln=True)
-        pdf.set_font("helvetica", "B", 9)
-        pdf.cell(60, 7, "Position", border=1)
-        pdf.cell(60, 7, "Art", border=1)
-        pdf.cell(70, 7, "Intensität", border=1, ln=True)
-        pdf.set_font("helvetica", "", 9)
-        for d in damage_list:
-            pdf.cell(60, 7, d['pos'], border=1)
-            pdf.cell(60, 7, d['type'], border=1)
-            pdf.cell(70, 7, d['int'], border=1, ln=True)
-
-    # 6. Fotos mit Randabstand
-    photos = data['condition_data'].get('photos', {})
-    if photos:
-        pdf.add_page()
-        pdf.set_font("helvetica", "B", 12)
-        pdf.cell(0, 10, "6. Fotodokumentation", ln=True)
-        y_pos, col = 30, 0
-        x_positions = [10, 105]
-        for p_label, p_url in photos.items():
-            if p_url and p_label != "signature":
+        pdf.cell(0, 10, "5. Erfasste Schäden & Details", ln=True)
+        
+        for idx, d in enumerate(damage_list):
+            # Check for page break
+            if pdf.get_y() > 220: pdf.add_page()
+            
+            pdf.set_font("helvetica", "B", 10)
+            pdf.cell(0, 8, f"Schaden #{idx+1}: {d['pos']}", ln=True, fill=False)
+            pdf.set_font("helvetica", "", 9)
+            pdf.cell(95, 7, f"Art: {d['type']}", border=1)
+            pdf.cell(95, 7, f"Intensität: {d['int']}", border=1, ln=True)
+            
+            # Schadensfoto direkt unter der Info einfügen
+            photo_key = f"schaden_{idx+1}"
+            if photo_key in photos and photos[photo_key]:
                 try:
-                    img_data = requests.get(p_url).content
-                    pdf.image(io.BytesIO(img_data), x=x_positions[col] + 3.5, y=y_pos + 3.5, w=83) 
-                    pdf.set_xy(x_positions[col], y_pos + 62)
-                    pdf.cell(90, 5, p_label.capitalize(), align="C")
-                    col += 1
-                    if col > 1: col = 0; y_pos += 75
-                    if y_pos > 230: pdf.add_page(); y_pos = 20
+                    res = requests.get(photos[photo_key], timeout=5)
+                    if res.status_code == 200:
+                        img_data = io.BytesIO(res.content)
+                        pdf.image(img_data, x=15, y=pdf.get_y() + 2, w=70)
+                        pdf.ln(50) # Platzhalter für das Bild
+                except:
+                    pdf.cell(0, 7, "[Foto konnte nicht geladen werden]", ln=True)
+            pdf.ln(5)
+
+    # 6. Allgemeine Fotodokumentation (Rundumblick)
+    # Wir filtern hier die Schadensfotos raus, da sie oben schon angezeigt wurden
+    general_labels = ["vorne", "hinten", "links", "rechts", "schein"]
+    general_photos = {k: v for k, v in photos.items() if k in general_labels}
+    
+    if general_photos:
+        pdf.add_page()
+        pdf.set_font("helvetica", "B", 14)
+        pdf.cell(0, 10, "6. Fotodokumentation (Rundumblick)", ln=True)
+        pdf.ln(5)
+
+        y_pos = pdf.get_y()
+        col = 0
+        x_positions = [15, 110]
+        
+        for p_label, p_url in general_photos.items():
+            if p_url:
+                try:
+                    response = requests.get(p_url, timeout=5)
+                    if response.status_code == 200:
+                        if y_pos > 230:
+                            pdf.add_page()
+                            y_pos = 20
+                        
+                        pdf.image(io.BytesIO(response.content), x=x_positions[col], y=y_pos, w=85)
+                        pdf.set_xy(x_positions[col], y_pos + 62)
+                        pdf.set_font("helvetica", "I", 9)
+                        pdf.cell(85, 5, p_label.capitalize(), align="C")
+                        
+                        col += 1
+                        if col > 1:
+                            col = 0
+                            y_pos += 75
                 except: pass
 
     # 7. Unterschrift
@@ -146,9 +177,11 @@ def create_pdf(data):
         pdf.set_font("helvetica", "B", 12)
         pdf.cell(0, 10, "7. Bestätigung & Unterschrift", ln=True)
         try:
-            sig_data = requests.get(photos["signature"]).content
-            pdf.image(io.BytesIO(sig_data), w=60)
-        except: pass
+            sig_res = requests.get(photos["signature"], timeout=5)
+            if sig_res.status_code == 200:
+                pdf.image(io.BytesIO(sig_res.content), w=60)
+        except:
+            pdf.cell(0, 10, "__________________________", ln=True)
 
     return bytes(pdf.output())
 
@@ -158,7 +191,8 @@ with tab1:
     if is_edit:
         st.warning(f"⚠️ Bearbeitungsmodus: {st.session_state.edit_data['vehicles']['license_plate']}")
         if st.button("Abbrechen"):
-            del st.session_state["edit_id"]; st.rerun()
+            if "edit_id" in st.session_state: del st.session_state["edit_id"]
+            st.rerun()
     
     st.title("Fahrzeug-Übergabe")
     
@@ -268,7 +302,9 @@ with tab1:
 with tab2:
     st.title("Archiv & Verwaltung")
     search_q = st.text_input("Suche Kennzeichen").upper()
-    results = supabase.table("protocols").select("*, vehicles(*)").order("created_at", desc=True).execute().data
+    results_res = supabase.table("protocols").select("*, vehicles(*)").order("created_at", desc=True).execute()
+    results = results_res.data if results_res.data else []
+    
     for r in results:
         plate = r['vehicles']['license_plate']
         if search_q in plate:
@@ -277,20 +313,12 @@ with tab2:
                 c1, c2 = st.columns(2)
                 with c1:
                     st.write(f"**Ersteller:** {r['inspector_name']} | **VIN:** {r['vehicles']['vin']}")
-                    st.write(f"**Standort:** {r['location']}")
                     dmg_arc = r['condition_data'].get('damage_records', [])
                     if dmg_arc:
                         st.write("**Schäden:**")
-                        for d in dmg_arc: st.info(f"📍 {d['pos']} | 🛠️ {d['type']} | ⚠️ {d['int']}")
+                        for d in dmg_arc: st.info(f"📍 {d['pos']} | 🛠️ {d['type']}")
                 with c2:
-                    st.write(f"**KM:** {r['odometer']} | **Sprit:** {r['fuel_level']}% | **Akku:** {r['condition_data'].get('battery', 0)}%")
-                    st.write("**Checkliste:**")
-                    cl_arc = r['condition_data'].get('checkliste', {})
-                    st.write(f"{'✅' if cl_arc.get('floor') else '❌'} Boden | {'✅' if cl_arc.get('seats') else '❌'} Sitze")
-                
-                if r.get('remarks'): st.write(f"**Bemerkungen:** {r['remarks']}")
-                arc_photos = r['condition_data'].get('photos', {})
-                if arc_photos: st.image([url for url in arc_photos.values() if url], width=150)
+                    st.write(f"**KM:** {r['odometer']} | **Sprit:** {r['fuel_level']}%")
                 
                 st.write("---")
                 col_btn1, col_btn2, col_btn3 = st.columns(3)
@@ -298,8 +326,8 @@ with tab2:
                     if st.button("Bearbeiten", key=f"ed_{r['id']}"):
                         st.session_state.edit_id, st.session_state.edit_data = r['id'], r; st.rerun()
                 with col_btn2:
-                    if st.button("📄 PDF vorbereiten", key=f"prep_{r['id']}"):
-                        with st.spinner("PDF wird generiert..."):
+                    if st.button("📄 PDF generieren", key=f"prep_{r['id']}"):
+                        with st.spinner("PDF wird erstellt..."):
                             pdf_bytes = create_pdf(r)
                             st.download_button("⬇️ Download PDF", data=pdf_bytes, file_name=f"Protokoll_{plate}.pdf", mime="application/pdf", key=f"dl_{r['id']}")
                 with col_btn3:
@@ -311,3 +339,4 @@ with tab2:
                     else:
                         if st.button("Löschen", key=f"d_{r['id']}"):
                             st.session_state[confirm_key] = True; st.rerun()
+    
