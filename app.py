@@ -1,3 +1,4 @@
+
 import streamlit as st
 from supabase import create_client, Client
 from streamlit_drawable_canvas import st_canvas
@@ -930,3 +931,4 @@ with tab2:
                     if st.button("Löschen", key=f"d_{r['id']}"):
                         st.session_state[confirm_key] = True
                         st.rerun()
+
