@@ -257,10 +257,22 @@ def _fetch_photos_parallel(photo_items: list[tuple[str, str]]) -> list[tuple[str
     return [(label, content) for (label, _), content in zip(photo_items, contents)]
 
 
-# FIX (Qualität): Unicode-fähige PDF-Klasse – löst Umlaut-Problem mit Helvetica
+import os
+
+LOGO_PATH = "logo.png"   # Logo-Datei im Repo-Root hinterlegen
+CONTENT_TOP = 25.0       # y-Position ab der Inhalt beginnt – unterhalb des Logos
+
 class UnicodePDF(FPDF):
-    """FPDF-Subklasse mit UTF-8-Unterstützung über core latin extended fonts."""
-    pass
+    def header(self):
+        """Logo oben links (22mm breit) + roter Streifen unten rechts auf jeder Seite."""
+        if os.path.exists(LOGO_PATH):
+            try:
+                self.image(LOGO_PATH, x=10, y=5, w=22)
+            except Exception:
+                pass
+        # Roter Streifen unten rechts
+        self.set_fill_color(200, 0, 0)
+        self.rect(196, 250, 6, 45, style="F")
 
 
 def _prepare_image_bytes(img_bytes: bytes) -> bytes:
@@ -328,13 +340,13 @@ def create_pdf(data: dict) -> bytes:
     if photos.get("signature"):
         sig_bytes = _fetch_image_bytes(photos["signature"])
 
-    # ── Seitenheader: Titel links, Datum + Unterschrift rechts ──────────────
-    # Unterschrift-Box: x=145, y=8, w=55, h=30
+    # ── Seitenheader: Titel rechts vom Logo, Datum + Unterschrift ganz rechts ─
+    # Logo belegt x:10-32, y:5-~20 → Titel startet bei x=35
     SIG_X, SIG_Y, SIG_W, SIG_BOX_H = 145, 8, 55, 30
 
     pdf.set_font("helvetica", "B", 16)
-    pdf.set_xy(10, 15)
-    pdf.cell(130, 10, u("Fahrzeug-Übergabeprotokoll"), ln=False)
+    pdf.set_xy(35, 12)
+    pdf.cell(105, 10, u("Fahrzeug-Übergabeprotokoll"), ln=False)
 
     # Datum + Unterschrift-Box oben rechts
     pdf.set_font("helvetica", "", 8)
@@ -352,7 +364,7 @@ def create_pdf(data: dict) -> bytes:
             pdf.image(io.BytesIO(sig_prepared), x=sig_img_x, y=SIG_Y + 10, w=sig_disp_w)
         except Exception:
             pass
-    pdf.set_xy(10, 28)
+    pdf.set_xy(10, CONTENT_TOP)
 
     # ── 1. Basisdaten ────────────────────────────────────────────────────────
     pdf.set_font("helvetica", "B", 12)
@@ -462,7 +474,7 @@ def create_pdf(data: dict) -> bytes:
     GAP         = 4.0
     PORT_MAX_H  = 95.0
     LAND_MAX_H  = 58.0
-    HEADER_Y    = 20.0
+    HEADER_Y    = CONTENT_TOP + 10
 
     ROW_Y = [
         HEADER_Y,
@@ -483,7 +495,7 @@ def create_pdf(data: dict) -> bytes:
     if any(fetched_map.get(lbl) for lbl, *_ in SLOTS):
         pdf.add_page()
         pdf.set_font("helvetica", "B", 12)
-        pdf.set_xy(10, 10)
+        pdf.set_xy(10, CONTENT_TOP)
         pdf.cell(0, 8, "5. Fotodokumentation", ln=True)
 
         for label, col_idx, row_idx, max_h in SLOTS:
@@ -506,6 +518,7 @@ def create_pdf(data: dict) -> bytes:
     dmg = data["condition_data"].get("damage_records", [])
     if dmg or schaden_items:
         pdf.add_page()
+        pdf.set_xy(10, CONTENT_TOP)
         pdf.set_font("helvetica", "B", 12)
         pdf.cell(0, 10, u("6. Erfasste Schäden"), ln=True)
 
@@ -577,7 +590,12 @@ with tab1:
             st.session_state.damage_count = 0
             st.rerun()
 
-    st.title("Fahrzeug-Übergabe")
+    _t_col, _logo_col = st.columns([8, 1])
+    with _t_col:
+        st.title("Fahrzeug-Übergabe")
+    with _logo_col:
+        if os.path.exists(LOGO_PATH):
+            st.image(LOGO_PATH, width=70)
 
     # ── Basisdaten ──────────────────────────────────────────────────────────
     st.header("1. Basisdaten")
@@ -803,7 +821,12 @@ with tab1:
 # ---------------------------------------------------------------------------
 
 with tab2:
-    st.title("Archiv & Verwaltung")
+    _t_col, _logo_col = st.columns([8, 1])
+    with _t_col:
+        st.title("Archiv & Verwaltung")
+    with _logo_col:
+        if os.path.exists(LOGO_PATH):
+            st.image(LOGO_PATH, width=70)
 
     search_q = st.text_input("Suche Kennzeichen").upper()
 
