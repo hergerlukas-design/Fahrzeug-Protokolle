@@ -361,36 +361,101 @@ def create_pdf(data: dict) -> bytes:
             pdf.cell(60, 7, u(d["type"]), border=1)
             pdf.cell(70, 7, u(d["int"]), border=1, ln=True)
 
-    # 6. Fotos – FIX (Performance): parallel herunterladen
+    # 6. Fotos
     photos = data["condition_data"].get("photos", {})
-    vehicle_photo_items = [
-        (label, url)
-        for label, url in photos.items()
-        if url and label != "signature"
-    ]
+
+    # Feste Reihenfolge: Rundumblick zuerst, dann Schein, dann Schadensfotos
+    PHOTO_ORDER = ["vorne", "links", "rechts", "hinten", "schein"]
+    ordered_labels = (
+        [lbl for lbl in PHOTO_ORDER if lbl in photos and photos[lbl]]
+        + [lbl for lbl in photos if lbl not in PHOTO_ORDER and lbl != "signature" and photos[lbl]]
+    )
+    vehicle_photo_items = [(lbl, photos[lbl]) for lbl in ordered_labels]
+
     if vehicle_photo_items:
         pdf.add_page()
         pdf.set_font("helvetica", "B", 12)
         pdf.cell(0, 10, "6. Fotodokumentation", ln=True)
-        y_pos, col = 30, 0
-        x_pos = [10, 105]
+
+        # Layout-Konstanten
+        # Zwei Spalten, je 90mm breit, 10mm Abstand dazwischen
+        COL_X      = [10, 108]   # x-Start der zwei Spalten
+        COL_W      = 87          # nutzbare Breite pro Spalte (mm)
+        MAX_H      = 130         # maximale Foto-Höhe (mm) — Portrait passt vollständig rein
+        LABEL_H    = 7           # Platz für Beschriftung (mm)
+        ROW_GAP    = 5           # Abstand zwischen Zeilen (mm)
+        PAGE_BOTTOM = 270        # untere Seitengrenze (mm)
+        HEADER_Y   = 25          # y-Start nach Seitenüberschrift
 
         fetched = _fetch_photos_parallel(vehicle_photo_items)
-        for label, img_bytes in fetched:
-            if img_bytes:
+
+        # Zeilen aufbauen: je 2 Fotos pro Zeile
+        rows = [fetched[i:i + 2] for i in range(0, len(fetched), 2)]
+        y_pos = HEADER_Y
+
+        for row in rows:
+            # Für jedes Foto in der Zeile: Seitenverhältnis ermitteln
+            row_photos = []  # (label, img_bytes, display_w, display_h)
+            for label, img_bytes in row:
+                if not img_bytes:
+                    row_photos.append((label, None, COL_W, 60))
+                    continue
                 try:
-                    pdf.image(io.BytesIO(img_bytes), x=x_pos[col] + 3.5, y=y_pos + 3.5, w=83)
-                    pdf.set_xy(x_pos[col], y_pos + 62)
-                    pdf.cell(90, 5, label.capitalize(), align="C")
-                    col += 1
-                    if col > 1:
-                        col = 0
-                        y_pos += 75
-                    if y_pos > 230:
-                        pdf.add_page()
-                        y_pos = 20
+                    pil_img = Image.open(io.BytesIO(img_bytes))
+                    img_w, img_h = pil_img.size
+
+                    # EXIF-Rotation berücksichtigen
+                    try:
+                        from PIL import ImageOps
+                        pil_img = ImageOps.exif_transpose(pil_img)
+                        img_w, img_h = pil_img.size
+                    except Exception:
+                        pass
+
+                    aspect = img_h / img_w  # > 1 = Hochformat, < 1 = Querformat
+
+                    # Erst auf Breite skalieren, dann auf Max-Höhe begrenzen
+                    display_w = COL_W
+                    display_h = display_w * aspect
+                    if display_h > MAX_H:
+                        display_h = MAX_H
+                        display_w = display_h / aspect
+
+                    row_photos.append((label, img_bytes, display_w, display_h))
                 except Exception:
-                    pass
+                    row_photos.append((label, img_bytes, COL_W, 60))
+
+            # Höhe der gesamten Zeile = höchstes Foto + Label
+            row_h = max(ph[3] for ph in row_photos) + LABEL_H + ROW_GAP
+
+            # Neue Seite falls nötig
+            if y_pos + row_h > PAGE_BOTTOM:
+                pdf.add_page()
+                y_pos = 15
+
+            # Fotos der Zeile platzieren
+            for col_idx, (label, img_bytes, display_w, display_h) in enumerate(row_photos):
+                x = COL_X[col_idx]
+                # Foto horizontal zentrieren in der Spalte
+                x_img = x + (COL_W - display_w) / 2
+
+                if img_bytes:
+                    try:
+                        pdf.image(io.BytesIO(img_bytes), x=x_img, y=y_pos, w=display_w, h=display_h)
+                    except Exception:
+                        pass
+
+                # Beschriftung unter dem Foto (linksbündig an Spalte)
+                label_display = {
+                    "vorne": "Vorne", "hinten": "Hinten",
+                    "links": "Links", "rechts": "Rechts", "schein": "Fahrzeugschein",
+                }.get(label, label.replace("_", " ").capitalize())
+
+                pdf.set_font("helvetica", "I", 8)
+                pdf.set_xy(x, y_pos + display_h + 1)
+                pdf.cell(COL_W, LABEL_H - 2, label_display, align="C")
+
+            y_pos += row_h
 
     # 7. Unterschrift
     if photos.get("signature"):
@@ -540,13 +605,13 @@ with tab1:
         z_aid    = st.toggle("Verbandskasten",    old_cl.get("aid_kit",       True))
         z_tri    = st.toggle("Warndreieck",       old_cl.get("triangle",      True))
         z_vest   = st.toggle("Warnweste",         old_cl.get("vest",          True))
-        z_cable  = st.toggle("Ladekabel",         old_cl.get("cable",         False))
+        z_cable  = st.toggle("Ladekabel",         old_cl.get("cable",         True))
         z_reg    = st.toggle("Fahrzeugschein",    old_cl.get("registration",  True))
         z_card   = st.toggle("Ladekarte",         old_cl.get("card",          True))
 
     # ── Füllstände ──────────────────────────────────────────────────────────
     st.header("4. Füllstände")
-    f_lvl   = st.session_state.edit_data["fuel_level"] if is_edit else 50
+    f_lvl   = st.session_state.edit_data["fuel_level"] if is_edit else 100
     fuel    = st.slider("Kraftstoff %", 0, 100, f_lvl)
 
     b_lvl   = st.session_state.edit_data["condition_data"].get("battery", 100) if is_edit else 100
