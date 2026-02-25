@@ -45,19 +45,22 @@ MAX_UPLOAD_SIZE_MB = 5
 
 # FIX (Qualität): Checkliste-Übersetzung nur einmal definiert, überall verwendet
 CHECKLIST_LABELS = {
-    "floor":        "Boden sauber",
-    "seats":        "Sitze sauber",
+    "floor":        "Boden",
+    "seats":        "Sitze",
     "entry":        "Einstiege",
-    "instruments":  "Armaturen OK",
-    "trunk":        "Kofferraum sauber",
-    "engine":       "Motorraum OK",
+    "instruments":  "Armaturen",
+    "trunk":        "Kofferraum",
+    "engine":       "Motorraum",
     "aid_kit":      "Verbandskasten",
     "triangle":     "Warndreieck",
     "vest":         "Warnweste",
     "cable":        "Ladekabel",
     "registration": "Fahrzeugschein",
-    "card":         "Ladekarte/Versicherung",
+    "card":         "Ladekarte",
 }
+
+# Welche Keys bekommen "Ja/Nein" statt "Sauber/Nicht sauber"
+CHECKLIST_JA_NEIN = {"aid_kit", "triangle", "vest", "cable", "registration", "card"}
 
 # ---------------------------------------------------------------------------
 # 3. HILFSFUNKTIONEN
@@ -392,12 +395,18 @@ def create_pdf(data: dict) -> bytes:
     pdf.set_font("helvetica", "", 9)
     cl = data["condition_data"].get("checkliste", {})
     items = list(cl.items())
+
+    def cl_val(key: str, val: bool) -> str:
+        if key in CHECKLIST_JA_NEIN:
+            return "Ja" if val else "Nein"
+        return "Sauber" if val else "Nicht sauber"
+
     for i in range(0, len(items), 2):
         k1, v1 = items[i]
-        pdf.cell(95, 7, f"{CHECKLIST_LABELS.get(k1, k1)}: {'OK' if v1 else 'Nicht OK'}", border=1)
+        pdf.cell(95, 7, f"{CHECKLIST_LABELS.get(k1, k1)}: {cl_val(k1, v1)}", border=1)
         if i + 1 < len(items):
             k2, v2 = items[i + 1]
-            pdf.cell(95, 7, f"{CHECKLIST_LABELS.get(k2, k2)}: {'OK' if v2 else 'Nicht OK'}", border=1, ln=True)
+            pdf.cell(95, 7, f"{CHECKLIST_LABELS.get(k2, k2)}: {cl_val(k2, v2)}", border=1, ln=True)
         else:
             pdf.ln(7)
 
@@ -887,4 +896,3 @@ with tab2:
                     if st.button("Löschen", key=f"d_{r['id']}"):
                         st.session_state[confirm_key] = True
                         st.rerun()
-                        
