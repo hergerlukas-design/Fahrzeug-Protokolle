@@ -66,7 +66,7 @@ def render_header_with_logo(title_text: str):
         # 'align-items: center' zentriert beides exakt auf derselben horizontalen Linie
         # 'justify-content: space-between' schiebt den Text nach links und das Logo nach rechts (wie Spalten)
         html = f"""
-        <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: nowrap; margin-bottom: 25px;">
+        <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: nowrap; margin-bottom: 45px;">
             <h1 style="margin: 0; padding: 0; line-height: 1.2;">{title_text}</h1>
             <img src="data:image/png;base64,{b64_string}" style="width: 70px; flex-shrink: 0; margin-right: 25px;">
         </div>
