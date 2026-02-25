@@ -1,3 +1,4 @@
+
 import streamlit as st
 from supabase import create_client, Client
 from streamlit_drawable_canvas import st_canvas
@@ -25,12 +26,19 @@ st.set_page_config(page_title="Vehicle Protocol Pro", layout="wide", page_icon="
 st.markdown("""
     <style>
         div[data-testid="stTabs"] > div:first-child {
-            position: sticky;
+            position: fixed;
             top: 0;
+            left: 0;
+            right: 0;
             background-color: var(--default-backgroundColor);
             z-index: 999;
-            padding-top: 10px;
+            padding: 10px 1rem 0 1rem;
             border-bottom: 1px solid rgba(128, 128, 128, 0.2);
+        }
+
+        /* Abstand damit der Inhalt nicht unter den fixierten Tabs verschwindet */
+        div[data-testid="stTabs"] > div:last-child {
+            margin-top: 50px;
         }
 
         .float-btn-placeholder {}
@@ -923,3 +931,4 @@ with tab2:
                     if st.button("Löschen", key=f"d_{r['id']}"):
                         st.session_state[confirm_key] = True
                         st.rerun()
+
