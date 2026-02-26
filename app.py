@@ -9,6 +9,7 @@ import uuid
 import requests
 import re
 import numpy as np
+import os
 from fpdf import FPDF
 from concurrent.futures import ThreadPoolExecutor
 
@@ -16,8 +17,9 @@ from concurrent.futures import ThreadPoolExecutor
 # 1. SETUP
 # ---------------------------------------------------------------------------
 
-url: str = st.secrets["SUPABASE_URL"]
-key: str = st.secrets["SUPABASE_KEY"]
+# Sucht erst in den Fly-Systemvariablen, dann in den Streamlit-Secrets
+url = os.environ.get("SUPABASE_URL") or st.secrets.get("SUPABASE_URL")
+key = os.environ.get("SUPABASE_KEY") or st.secrets.get("SUPABASE_KEY")
 supabase: Client = create_client(url, key)
 
 st.set_page_config(page_title="Vehicle Protocol Pro", layout="wide", page_icon="🚗")
