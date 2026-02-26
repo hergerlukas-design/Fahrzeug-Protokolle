@@ -17,12 +17,20 @@ from concurrent.futures import ThreadPoolExecutor
 # 1. SETUP
 # ---------------------------------------------------------------------------
 
-# Sucht erst in den Fly-Systemvariablen, dann in den Streamlit-Secrets
+# Zeile 20 bis 22: Verbindung zu Supabase (Fly.io-sicher)
 url = os.environ.get("SUPABASE_URL") or st.secrets.get("SUPABASE_URL")
 key = os.environ.get("SUPABASE_KEY") or st.secrets.get("SUPABASE_KEY")
 supabase: Client = create_client(url, key)
 
-st.set_page_config(page_title="Vehicle Protocol Pro", layout="wide", page_icon="🚗")
+# Zeile 23: Seiteneinstellungen (Branding)
+st.set_page_config(
+    page_title="Vehicle Protocol Pro", 
+    layout="wide", 
+    page_icon="logo.png"  # Hier nutzen wir dein Bild statt dem Emoji
+)
+
+# NEU: Zeile 24: Verbindung zur Manifest-Datei (für das Handy-Icon)
+st.markdown('<link rel="manifest" href="/manifest.json">', unsafe_allow_html=True)
 
 tab1, tab2 = st.tabs(["📝 Protokoll erstellen / Bearbeiten", "🔍 Archiv & Verwaltung"])
 
