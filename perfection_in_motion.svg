@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 200" width="1200" height="200">
+  <defs>
+    <style>
+      @import url('https://fonts.googleapis.com/css2?family=Raleway:wght@100&amp;display=swap');
+    </style>
+  </defs>
+  <rect width="1200" height="200" fill="white"/>
+  <text
+    x="50%"
+    y="55%"
+    dominant-baseline="middle"
+    text-anchor="middle"
+    font-family="'Raleway', 'Helvetica Neue', Helvetica, Arial, sans-serif"
+    font-weight="100"
+    font-size="96"
+    letter-spacing="8"
+    fill="#1a1a1a"
+  >perfection in motion</text>
+</svg>
