@@ -5,6 +5,7 @@ from PIL import Image
 import io
 import base64
 import datetime
+from zoneinfo import ZoneInfo
 import uuid
 import requests
 import re
@@ -14,7 +15,7 @@ from fpdf import FPDF
 from concurrent.futures import ThreadPoolExecutor
 
 # ---------------------------------------------------------------------------
-# 1. SETUP
+# 1. SETUP & KONFIGURATION
 # ---------------------------------------------------------------------------
 
 try:
@@ -26,6 +27,7 @@ except (KeyError, FileNotFoundError):
 if not url or not key:
     st.error("SUPABASE_URL oder SUPABASE_KEY ist leer.")
     st.stop()
+
 supabase: Client = create_client(url, key)
 
 st.set_page_config(
@@ -36,30 +38,36 @@ st.set_page_config(
 
 st.markdown('<link rel="manifest" href="/manifest.json">', unsafe_allow_html=True)
 
-# ---------------------------------------------------------------------------
-# TAB-FIX: Ersetzen von st.tabs durch st.radio für sauberes Canvas-Rendering
-# ---------------------------------------------------------------------------
 st.markdown("""
     <style>
     div[role="radiogroup"] {
         flex-wrap: nowrap !important;
         overflow-x: auto !important;
         white-space: nowrap !important;
-        -webkit-overflow-scrolling: touch; /* Für flüssiges Scrollen auf iOS */
-        padding-bottom: 10px; /* Etwas Platz für die Scrollbar */
+        -webkit-overflow-scrolling: touch;
+        padding-bottom: 10px;
     }
+    .stButton>button { width: 100%; border-radius: 8px; height: 3em; }
+    .stExpander { border: 1px solid #f0f2f6; border-radius: 8px; margin-bottom: 10px; }
     </style>
 """, unsafe_allow_html=True)
 
+TAB_OPTIONS = [
+    "📝 Protokoll erstellen / Bearbeiten",
+    "🔍 Archiv & Verwaltung",
+    "🚙 Fahrzeug-Überführung",
+]
+
+_redirect = st.session_state.pop("nav_redirect", None)
+if _redirect in TAB_OPTIONS:
+    st.session_state.nav_tab = _redirect
+
 active_tab = st.radio(
     "Navigation",
-    [
-        "📝 Protokoll erstellen / Bearbeiten",
-        "🔍 Archiv & Verwaltung",
-        "🚙 Fahrzeug-Überführung"
-    ],
+    TAB_OPTIONS,
     horizontal=True,
-    label_visibility="collapsed"
+    label_visibility="collapsed",
+    key="nav_tab",
 )
 st.divider()
 
@@ -91,9 +99,9 @@ CHECKLIST_LABELS = {
 
 CHECKLIST_JA_NEIN = {"aid_kit", "triangle", "vest", "cable", "registration", "card"}
 
-# OPT #6 - PDF-Layout-Konstanten zentral (keine Magic Numbers)
-LOGO_PATH    = "carhandling.png"
-CONTENT_TOP  = 45.0
+LOGO_PATH           = "logo.png"
+PERFECTION_IMG_PATH = "perfection_in_motion.svg"
+CONTENT_TOP         = 45.0
 
 PDF_SIG_X      = 145.0
 PDF_SIG_Y      = 250.0
@@ -116,11 +124,11 @@ PDF_GRAU_X = 208.5
 PDF_GRAU_Y = 50.0
 
 # ---------------------------------------------------------------------------
-# 3. HILFSFUNKTIONEN
+# 3. HILFSFUNKTIONEN & DATENBANK
 # ---------------------------------------------------------------------------
 
 def render_header_with_logo(title_text: str):
-    logo_pfad = "logo.png"
+    logo_pfad = LOGO_PATH
     if os.path.exists(logo_pfad):
         with open(logo_pfad, "rb") as img_file:
             b64_string = base64.b64encode(img_file.read()).decode()
@@ -136,20 +144,15 @@ def render_header_with_logo(title_text: str):
 def sanitize_filename(text: str) -> str:
     if not text:
         return "unbekannt"
-    
-    # Map für die Umwandlung NUR für Dateinamen/Pfaden
     replacements = {
-        "ä": "ae", "ö": "oe", "ü": "ue",
-        "Ä": "Ae", "Ö": "Oe", "Ü": "Ue",
-        "ß": "ss", " ": "_", "&": "und"
+        "ae": "ae", "oe": "oe", "ue": "ue",
+        "Ae": "Ae", "Oe": "Oe", "Ue": "Ue",
+        "ss": "ss", " ": "_", "&": "und"
     }
-    
-    for char, rep in replacements.items():
+    uml = {"ä":"ae","ö":"oe","ü":"ue","Ä":"Ae","Ö":"Oe","Ü":"Ue","ß":"ss"," ":"_","&":"und"}
+    for char, rep in uml.items():
         text = text.replace(char, rep)
-    
-    # Entfernt alles, was kein Buchstabe, Zahl, Unterstrich oder Bindestrich ist
     return re.sub(r"[^a-zA-Z0-9_\-]", "", text)
-
 
 def compress_image(data: bytes, max_size_mb: float = MAX_UPLOAD_SIZE_MB, quality: int = 85) -> bytes:
     img = Image.open(io.BytesIO(data))
@@ -173,52 +176,52 @@ def compress_image(data: bytes, max_size_mb: float = MAX_UPLOAD_SIZE_MB, quality
     img.save(buf, format="JPEG", quality=40, optimize=True)
     return buf.getvalue()
 
-
 def upload_photo(file, folder_path: str, p_type: str, is_pil: bool = False) -> str | None:
     if file is None:
         return None
     try:
         clean_parts = [sanitize_filename(part) for part in folder_path.split("/")]
         clean_folder = "/".join(clean_parts)
+        
+        today_date = datetime.datetime.now(ZoneInfo("Europe/Berlin")).date()
+        ext = "jpg"
+        path = f"{clean_folder}/{today_date}_{p_type}_{uuid.uuid4().hex[:5]}.{ext}"
+        
         if is_pil:
-            ext = "png"
-            path = f"{clean_folder}/{datetime.date.today()}_{p_type}_{uuid.uuid4().hex[:5]}.{ext}"
+            pil_src = file if isinstance(file, Image.Image) else Image.open(io.BytesIO(file))
+            bg = Image.new("RGB", pil_src.size, (255, 255, 255))
+            if pil_src.mode == "RGBA":
+                bg.paste(pil_src, mask=pil_src.split()[3])
+            else:
+                bg.paste(pil_src.convert("RGBA"), mask=pil_src.convert("RGBA").split()[3])
             buf = io.BytesIO()
-            file.save(buf, format="PNG")
+            bg.save(buf, format="JPEG", quality=95)
             content = buf.getvalue()
         else:
             raw = file.getvalue()
             size_mb = len(raw) / (1024 * 1024)
             if size_mb > MAX_UPLOAD_SIZE_MB:
-                st.info(f"📸 '{p_type}': {size_mb:.1f} MB wird komprimiert...")
+                st.info(f"Komprimiere '{p_type}'...")
                 content = compress_image(raw)
-                st.info(f"✅ '{p_type}' komprimiert auf {len(content)/(1024*1024):.1f} MB")            
             else:
                 content = raw
-            ext = "jpg"
-            path = f"{clean_folder}/{datetime.date.today()}_{p_type}_{uuid.uuid4().hex[:5]}.{ext}"
+            
         supabase.storage.from_("vehicle-photos").upload(path, content)
         return supabase.storage.from_("vehicle-photos").get_public_url(path)
     except Exception as e:
         st.error(f"Upload-Fehler ({p_type}): {e}")
         return None
 
-
-# OPT #3 - Pflichtfotos parallel hochladen
 def upload_required_photos_parallel(photo_map: dict, path: str) -> dict[str, str]:
-    """Laedt alle angegebenen Fotos parallel hoch. Gibt {label: url} zurueck."""
     items = [(lbl, f) for lbl, f in photo_map.items() if f is not None]
     if not items:
         return {}
-
     def _upload_one(args):
         lbl, f = args
         return lbl, upload_photo(f, path, lbl)
-
     with ThreadPoolExecutor(max_workers=5) as executor:
         results = list(executor.map(_upload_one, items))
     return {lbl: u for lbl, u in results if u}
-
 
 @st.cache_data(ttl=60)
 def get_projects() -> list[str]:
@@ -229,26 +232,26 @@ def get_projects() -> list[str]:
         st.warning(f"Projekte konnten nicht geladen werden: {e}")
         return []
 
-
-# OPT #1 + #2 - Gecachte Archiv-Query mit serverseitiger Status-Filterung
 @st.cache_data(ttl=30)
-def get_protocols(status_filter: tuple[str, ...]) -> list[dict]:
-    """Laedt Protokolle mit serverseitigem Status-Filter. Gecacht fuer 30s."""
+def get_protocols(status_filter: tuple[str, ...], search_q: str = "") -> list[dict]:
     try:
         query = (
             supabase.table("protocols")
-            .select("*, vehicles(*)")
+            .select("*, vehicles!inner(*)")
             .order("created_at", desc=True)
         )
         if len(status_filter) == 1:
             query = query.eq("status", status_filter[0])
         elif len(status_filter) > 1:
             query = query.in_("status", list(status_filter))
+            
+        if search_q:
+            query = query.ilike("vehicles.license_plate", f"%{search_q}%")
+            
         return query.limit(200).execute().data
     except Exception as e:
         st.error(f"Fehler beim Laden der Protokolle: {e}")
         return []
-
 
 def validate_inputs(kennzeichen: str, p_name: str, confirm: bool, km: int) -> bool:
     if not kennzeichen:
@@ -265,22 +268,27 @@ def validate_inputs(kennzeichen: str, p_name: str, confirm: bool, km: int) -> bo
         return False
     return True
 
-
 def ensure_project(name: str) -> int:
     supabase.table("projects").upsert({"name": name}, on_conflict="name").execute()
     res = supabase.table("projects").select("id").eq("name", name).execute()
     get_projects.clear()
     return res.data[0]["id"]
 
-
 def upsert_vehicle(project_id: int, license_plate: str, brand_model: str, vin: str) -> int:
-    res = supabase.table("vehicles").upsert(
+    existing = supabase.table("vehicles").select("id").eq("license_plate", license_plate).execute()
+    if existing.data:
+        v_id = existing.data[0]["id"]
+        supabase.table("vehicles").update({
+            "brand_model": brand_model,
+            "vin": vin
+        }).eq("id", v_id).execute()
+        return v_id
+    
+    res = supabase.table("vehicles").insert(
         {"project_id": project_id, "license_plate": license_plate,
-         "brand_model": brand_model, "vin": vin},
-        on_conflict="license_plate",
+         "brand_model": brand_model, "vin": vin}
     ).execute()
     return res.data[0]["id"]
-
 
 def upload_all_photos(files: dict, path: str) -> dict:
     urls = {}
@@ -292,18 +300,17 @@ def upload_all_photos(files: dict, path: str) -> dict:
                 urls[label] = result
     return urls
 
-
 def build_payload(vehicle_id, inspector_name, location, odometer,
                   fuel_level, remarks, battery, photos, conditions,
-                  damage_records, checkliste) -> dict:
-    return {
+                  damage_records, checkliste, receiver_signed_at=None) -> dict:
+    payload = {
         "vehicle_id": vehicle_id,
         "inspector_name": inspector_name,
         "location": location,
         "odometer": odometer,
         "fuel_level": fuel_level,
         "remarks": remarks,
-        "inspection_date": datetime.datetime.now().isoformat(),
+        "inspection_date": datetime.datetime.now(ZoneInfo("Europe/Berlin")).isoformat(),
         "condition_data": {
             "battery": battery,
             "photos": photos,
@@ -312,7 +319,9 @@ def build_payload(vehicle_id, inspector_name, location, odometer,
             "checkliste": checkliste,
         },
     }
-
+    if receiver_signed_at:
+        payload["condition_data"]["receiver_signed_at"] = receiver_signed_at
+    return payload
 
 def save_protocol(payload: dict, edit_id: int | None = None) -> bool:
     try:
@@ -320,19 +329,17 @@ def save_protocol(payload: dict, edit_id: int | None = None) -> bool:
             supabase.table("protocols").update(payload).eq("id", edit_id).execute()
         else:
             supabase.table("protocols").insert(payload).execute()
-        get_protocols.clear()   # OPT #1 - Cache nach Speichern invalidieren
+        get_protocols.clear()
         return True
     except Exception as e:
         st.error(f"Fehler beim Speichern: {e}")
         return False
 
-
 # ---------------------------------------------------------------------------
-# OPT #4 - Geteilte UI-Komponenten (kein duplizierter Code mehr in Tab1/Tab3)
+# 4. GETEILTE UI-KOMPONENTEN
 # ---------------------------------------------------------------------------
 
 def render_photo_upload_section(key_prefix: str) -> tuple:
-    """Rendert die 5 Pflichtfoto-Uploader. Gibt (fv, fh, fl, fr, fs) zurueck."""
     st.subheader("Pflicht-Fotos (Rundumblick)")
     c1, c2 = st.columns(2)
     with c1:
@@ -344,23 +351,18 @@ def render_photo_upload_section(key_prefix: str) -> tuple:
         fr = st.file_uploader("Rechts", type=["jpg", "png"], key=f"{key_prefix}_fr")
     return fv, fh, fl, fr, fs
 
-
 def render_damage_section(key_prefix: str, count_key: str, old_dmgs: list) -> tuple[list, dict]:
-    """Rendert die Schadens-Erfassung. Gibt (damage_records, d_files) zurueck."""
-    st.subheader("🛠️ Schäden erfassen")
+    st.subheader("Schäden erfassen")
     if count_key not in st.session_state:
         st.session_state[count_key] = len(old_dmgs)
-
-    if st.button("➕ Neuen Schaden hinzufügen", key=f"{key_prefix}_add_dmg"):
+    if st.button("Neuen Schaden hinzufügen", key=f"{key_prefix}_add_dmg"):
         st.session_state[count_key] += 1
     damage_records: list[dict] = []
     d_files: dict = {}
-
     POS_LIST  = ["Stossfänger vorne", "Stossfänger hinten", "Motorhaube", "Dach",
                  "Tuer VL", "Tuer VR", "Felge VL", "Felge VR", "Felge HL", "Felge HR"]
     TYPE_LIST = ["Kratzer", "Delle", "Steinschlag", "Riss", "Fehlteil"]
     INT_LIST  = ["Oberflächlich", "Bis Grundierung", "Deformiert"]
-
     for i in range(st.session_state[count_key]):
         d_val = old_dmgs[i] if i < len(old_dmgs) else {
             "pos": POS_LIST[0], "type": TYPE_LIST[0], "int": INT_LIST[0]
@@ -386,27 +388,24 @@ def render_damage_section(key_prefix: str, count_key: str, old_dmgs: list) -> tu
                 if df:
                     d_files[f"schaden_{i + 1}"] = df
             damage_records.append({"pos": pos, "type": dtype, "int": intens})
-
     return damage_records, d_files
 
-
 def render_checklist(key_prefix: str, old_cl: dict) -> dict:
-    """Rendert die 12 Checklisten-Toggles. Gibt {key: bool} zurueck."""
     c1, c2 = st.columns(2)
     with c1:
         floor  = st.toggle("Boden sauber",     old_cl.get("floor",         False), key=f"{key_prefix}_floor")
-        seats  = st.toggle("Sitze sauber",      old_cl.get("seats",         False), key=f"{key_prefix}_seats")
-        covers = st.toggle("Einstiege",         old_cl.get("entry",         False), key=f"{key_prefix}_entry")
-        instr  = st.toggle("Armaturen",         old_cl.get("instruments",   False), key=f"{key_prefix}_instr")
+        seats  = st.toggle("Sitze sauber",     old_cl.get("seats",         False), key=f"{key_prefix}_seats")
+        covers = st.toggle("Einstiege",        old_cl.get("entry",         False), key=f"{key_prefix}_entry")
+        instr  = st.toggle("Armaturen",        old_cl.get("instruments",   False), key=f"{key_prefix}_instr")
         trunk  = st.toggle("Kofferraum sauber", old_cl.get("trunk",         False), key=f"{key_prefix}_trunk")
-        engine = st.toggle("Motorraum",         old_cl.get("engine",        False), key=f"{key_prefix}_engine")
+        engine = st.toggle("Motorraum",        old_cl.get("engine",        False), key=f"{key_prefix}_engine")
     with c2:
-        aid    = st.toggle("Verbandskasten",    old_cl.get("aid_kit",       False), key=f"{key_prefix}_aid")
-        tri    = st.toggle("Warndreieck",       old_cl.get("triangle",      False), key=f"{key_prefix}_tri")
-        vest   = st.toggle("Warnweste",         old_cl.get("vest",          False), key=f"{key_prefix}_vest")
-        cable  = st.toggle("Ladekabel",         old_cl.get("cable",         False), key=f"{key_prefix}_cable")
-        reg    = st.toggle("Fahrzeugschein",    old_cl.get("registration",  False), key=f"{key_prefix}_reg")
-        card   = st.toggle("Ladekarte",         old_cl.get("card",          False), key=f"{key_prefix}_card")
+        aid    = st.toggle("Verbandskasten",   old_cl.get("aid_kit",       False), key=f"{key_prefix}_aid")
+        tri    = st.toggle("Warndreieck",      old_cl.get("triangle",      False), key=f"{key_prefix}_tri")
+        vest   = st.toggle("Warnweste",        old_cl.get("vest",          False), key=f"{key_prefix}_vest")
+        cable  = st.toggle("Ladekabel",        old_cl.get("cable",         False), key=f"{key_prefix}_cable")
+        reg    = st.toggle("Fahrzeugschein",   old_cl.get("registration",  False), key=f"{key_prefix}_reg")
+        card   = st.toggle("Ladekarte",        old_cl.get("card",          False), key=f"{key_prefix}_card")
     return {
         "floor": floor, "seats": seats, "entry": covers,
         "instruments": instr, "trunk": trunk, "engine": engine,
@@ -414,9 +413,8 @@ def render_checklist(key_prefix: str, old_cl: dict) -> dict:
         "cable": cable, "registration": reg, "card": card,
     }
 
-
 # ---------------------------------------------------------------------------
-# 4. PDF-ERSTELLUNG
+# 5. PDF-ERSTELLUNG & ZEICHNEN
 # ---------------------------------------------------------------------------
 
 def _fetch_image_bytes(url: str) -> bytes | None:
@@ -425,13 +423,11 @@ def _fetch_image_bytes(url: str) -> bytes | None:
     except Exception:
         return None
 
-
 def _fetch_photos_parallel(photo_items: list[tuple]) -> list[tuple]:
     urls = [url for _, url in photo_items]
     with ThreadPoolExecutor(max_workers=5) as executor:
         contents = list(executor.map(_fetch_image_bytes, urls))
     return [(label, content) for (label, _), content in zip(photo_items, contents)]
-
 
 def _prepare_image_bytes(img_bytes: bytes) -> bytes:
     try:
@@ -439,13 +435,17 @@ def _prepare_image_bytes(img_bytes: bytes) -> bytes:
         pil_img = Image.open(io.BytesIO(img_bytes))
         pil_img = ImageOps.exif_transpose(pil_img)
         if pil_img.mode in ("RGBA", "P"):
+            bg = Image.new("RGB", pil_img.size, (255, 255, 255))
+            rgba = pil_img.convert("RGBA")
+            bg.paste(rgba, mask=rgba.split()[3])
+            pil_img = bg
+        elif pil_img.mode != "RGB":
             pil_img = pil_img.convert("RGB")
         buf = io.BytesIO()
         pil_img.save(buf, format="JPEG", quality=90)
         return buf.getvalue()
     except Exception:
         return img_bytes
-
 
 def _get_photo_display_size(img_bytes: bytes, max_w: float, max_h: float) -> tuple[float, float]:
     try:
@@ -462,13 +462,15 @@ def _get_photo_display_size(img_bytes: bytes, max_w: float, max_h: float) -> tup
         disp_w = orig_w * scale
     return disp_w, disp_h
 
+def _canvas_has_stroke(image_data) -> bool:
+    if image_data is None:
+        return False
+    return bool((image_data[:, :, 0] < 200).any())
 
 def _u(text) -> str:
-    """Gibt den Text nun einfach 1:1 zurück, da fpdf2 Unicode kann."""
     if not isinstance(text, str):
         text = str(text)
     return text
-
 
 class UnicodePDF(FPDF):
     def header(self):
@@ -477,23 +479,33 @@ class UnicodePDF(FPDF):
                 self.image(LOGO_PATH, x=175, y=5, w=22)
             except Exception:
                 pass
-        # Roter Streifen links unten
         self.set_fill_color(219, 50, 62)
         self.rect(0, 150, 3, 147, style="F")
-        # Grauer Streifen rechts oben
         self.set_fill_color(63, 63, 63)
         self.rect(207, 0, 3, 100, style="F")
-        # Slogan vertikal links NEBEN dem grauen Balken
-        self.set_font("helvetica", "", 3)
-        self.set_text_color(63, 63, 63) 
-        TEXT_X = PDF_GRAU_X - 3.0 # Etwas nach links verschieben
-        with self.rotation(90, x=TEXT_X, y=PDF_GRAU_Y):
-            self.set_xy(TEXT_X - 25, PDF_GRAU_Y - 1.5)
-            self.cell(50, 3, "perfection in motion", align="C")
+        
+        TEXT_X = 203.0
+        TEXT_Y = 100.0
+        
+        # NEU: Versuch das SVG als Bild zu laden
+        if os.path.exists(PERFECTION_IMG_PATH):
+            try:
+                with self.rotation(90, x=TEXT_X, y=TEXT_Y):
+                    # y - 3.0 um das Bild vertikal sauber zum Rand zu zentrieren, w=35 gibt die Breite an
+                    self.image(PERFECTION_IMG_PATH, x=TEXT_X, y=TEXT_Y - 3.0, w=35)
+            except Exception:
+                # Falls das Bild defekt ist oder die PDF Engine es nicht mag: Fallback zum Text
+                self._draw_fallback_text(TEXT_X, TEXT_Y)
+        else:
+            self._draw_fallback_text(TEXT_X, TEXT_Y)
+
+    def _draw_fallback_text(self, text_x, text_y):
+        self.set_font("helvetica", "", 8.5)
+        self.set_text_color(63, 63, 63)
+        with self.rotation(90, x=text_x, y=text_y):
+            self.set_xy(text_x, text_y - 2.0)
+            self.cell(37, 4, "perfection in motion", align="L")
         self.set_text_color(0, 0, 0)
-
-
-# OPT #5 - create_pdf aufgeteilt in klar benannte Teilfunktionen
 
 def _pdf_draw_watermark(pdf: UnicodePDF):
     pdf.set_font("helvetica", "B", 52)
@@ -503,7 +515,6 @@ def _pdf_draw_watermark(pdf: UnicodePDF):
         pdf.cell(0, 20, "VORLÄUFIGER ENTWURF", align="C")
     pdf.set_text_color(0, 0, 0)
     pdf.set_font("helvetica", "", 10)
-
 
 def _pdf_draw_title_and_std_signature(pdf, data, is_transfer, sig_bytes):
     pdf.set_font("helvetica", "B", 16)
@@ -528,36 +539,47 @@ def _pdf_draw_title_and_std_signature(pdf, data, is_transfer, sig_bytes):
             except Exception:
                 pass
 
-
 def _pdf_draw_basisdaten(pdf, data, is_transfer):
     pdf.set_xy(10, CONTENT_TOP)
     pdf.set_font("helvetica", "B", 12)
     pdf.cell(0, 8, "1. Basisdaten", ln=True)
     pdf.set_font("helvetica", "", 10)
-    pdf.cell(95, 8, f"Kennzeichen: {data['vehicles']['license_plate']}", border=1)
-    pdf.cell(95, 8, _u(f"Modell: {data['vehicles']['brand_model']}"), border=1, ln=True)
-    pdf.cell(95, 8, f"VIN: {data['vehicles']['vin']}", border=1)
-    pdf.cell(95, 8, _u(f"Ersteller: {data['inspector_name']}"), border=1, ln=True)
-    pdf.cell(95, 8, f"KM-Stand: {data['odometer']} KM", border=1)
+
     if is_transfer:
+        pdf.cell(95, 8, f"Kennzeichen: {data['vehicles']['license_plate']}", border=1)
+        pdf.cell(95, 8, f"VIN: {data['vehicles']['vin']}", border=1, ln=True)
+        pdf.cell(95, 8, _u(f"Modell: {data['vehicles']['brand_model']}"), border=1)
+        pdf.cell(95, 8, f"KM-Stand: {data['odometer']} KM", border=1, ln=True)
+        pdf.cell(95, 8, _u(f"Ersteller: {data['inspector_name']}"), border=1)
+        recv = _u(data.get("receiver_name") or "-")
+        pdf.cell(95, 8, f"Empfänger: {recv}", border=1, ln=True)
         von  = _u(data.get("start_location") or "-")
         nach = _u(data.get("end_location")   or "-")
-        pdf.cell(95, 8, f"Von: {von}  >>  Nach: {nach}", border=1, ln=True)
-        recv = _u(data.get("receiver_name") or "-")
-        pdf.cell(190, 8, f"Empfänger: {recv}", border=1, ln=True)
+        pdf.cell(95, 8, f"Von: {von}", border=1)
+        pdf.cell(95, 8, f"Nach: {nach}", border=1, ln=True)
+        conditions_str = _u(", ".join(data["condition_data"].get("conditions", [])))
+        pdf.cell(190, 8, f"Bedingungen: {conditions_str}", border=1, ln=True)
     else:
+        pdf.cell(95, 8, f"Kennzeichen: {data['vehicles']['license_plate']}", border=1)
+        pdf.cell(95, 8, _u(f"Modell: {data['vehicles']['brand_model']}"), border=1, ln=True)
+        pdf.cell(95, 8, f"VIN: {data['vehicles']['vin']}", border=1)
+        pdf.cell(95, 8, _u(f"Ersteller: {data['inspector_name']}"), border=1, ln=True)
+        pdf.cell(95, 8, f"KM-Stand: {data['odometer']} KM", border=1)
         pdf.cell(95, 8, _u(f"Standort: {data['location']}"), border=1, ln=True)
 
-
 def _pdf_draw_technik(pdf, data):
+    is_transfer = data.get("protocol_type") == "transfer"
     pdf.ln(4)
     pdf.set_font("helvetica", "B", 12)
     pdf.cell(0, 8, "2. Technik & Betriebsstoffe", ln=True)
     pdf.set_font("helvetica", "", 10)
-    pdf.cell(63, 8, f"Kraftstoff: {data['fuel_level']}%", border=1)
-    pdf.cell(63, 8, f"Batterie: {data['condition_data'].get('battery', 0)}%", border=1)
-    pdf.cell(64, 8, _u(f"Bedingungen: {', '.join(data['condition_data'].get('conditions', []))}"), border=1, ln=True)
-
+    if is_transfer:
+        pdf.cell(95, 8, f"Kraftstoff: {data['fuel_level']}%", border=1)
+        pdf.cell(95, 8, f"Batterie: {data['condition_data'].get('battery', 0)}%", border=1, ln=True)
+    else:
+        pdf.cell(63, 8, f"Kraftstoff: {data['fuel_level']}%", border=1)
+        pdf.cell(63, 8, f"Batterie: {data['condition_data'].get('battery', 0)}%", border=1)
+        pdf.cell(64, 8, _u(f"Bedingungen: {', '.join(data['condition_data'].get('conditions', []))}"), border=1, ln=True)
 
 def _pdf_draw_checkliste(pdf, data):
     def cl_val(key, val):
@@ -592,7 +614,6 @@ def _pdf_draw_checkliste(pdf, data):
             pdf.cell(COL_W, ROW_H, f"{CHECKLIST_LABELS.get(k,k)}: {cl_val(k,v)}", border=1)
         pdf.ln(ROW_H)
 
-
 def _pdf_draw_bemerkungen(pdf, data):
     if data.get("remarks"):
         pdf.ln(4)
@@ -601,6 +622,57 @@ def _pdf_draw_bemerkungen(pdf, data):
         pdf.set_font("helvetica", "", 10)
         pdf.multi_cell(190, 8, _u(data["remarks"]), border=1)
 
+def _pdf_draw_transfer_signatures(pdf, data, sig_bytes, sig_receiver_bytes):
+    if pdf.get_y() > 225:
+        pdf.add_page()
+    else:
+        pdf.ln(8)
+
+    footer_y = pdf.get_y()
+    BW = PDF_TRANS_BOX_W
+    LX = PDF_TRANS_LEFT_X
+    RX = PDF_TRANS_RIGHT_X
+
+    pdf.set_font("helvetica", "B", 9)
+    pdf.set_xy(LX, footer_y)
+    pdf.cell(BW, 6, _u("Übergabe durch (Ersteller)"),  border="TB", ln=False, align="C")
+    pdf.set_xy(RX, footer_y)
+    pdf.cell(BW, 6, _u("Übernahme durch (Empfänger)"), border="TB", ln=False, align="C")
+    pdf.ln(6)
+
+    name_y = pdf.get_y()
+    pdf.set_font("helvetica", "", 9)
+    pdf.set_xy(LX, name_y)
+    pdf.cell(BW, 6, _u(f"Name: {data.get('inspector_name', '')}"), ln=False)
+    pdf.set_xy(RX, name_y)
+    pdf.cell(BW, 6, _u(f"Name: {data.get('receiver_name', '')}"),  ln=False)
+    pdf.ln(6)
+
+    sig_y = pdf.get_y()
+
+    for sig, x in [(sig_bytes, LX), (sig_receiver_bytes, RX)]:
+        if sig:
+            try:
+                sp  = _prepare_image_bytes(sig)
+                dw, _ = _get_photo_display_size(sp, PDF_TRANS_SIG_W, PDF_TRANS_SIG_H)
+                img_x = x + (BW - dw) / 2
+                pdf.image(io.BytesIO(sp), x=img_x, y=sig_y, w=dw)
+            except Exception:
+                pass
+        else:
+            pdf.set_draw_color(180, 180, 180)
+            pdf.set_xy(x + 5, sig_y + PDF_TRANS_SIG_H - 3)
+            pdf.cell(BW - 10, 0, "", border="B")
+            pdf.set_draw_color(0, 0, 0)
+
+    ts_y = sig_y + PDF_TRANS_SIG_H + 2
+    pdf.set_font("helvetica", "", 8)
+    pdf.set_xy(LX, ts_y)
+    pdf.cell(BW, 5, f"Datum: {data['created_at'][:16].replace('T', ' ')}", align="C")
+    pdf.set_xy(RX, ts_y)
+    recv_ts  = data["condition_data"].get("receiver_signed_at", "")
+    recv_str = recv_ts[:16].replace("T", " ") if recv_ts else "___________"
+    pdf.cell(BW, 5, f"Datum: {recv_str}", align="C")
 
 def _pdf_draw_fotos(pdf, fetched_map):
     HEADER_Y = CONTENT_TOP + 10
@@ -634,7 +706,6 @@ def _pdf_draw_fotos(pdf, fetched_map):
             pdf.image(io.BytesIO(img), x=x + (PDF_FOTO_COL_W - dw) / 2, y=y, w=dw)
         except Exception:
             pass
-
 
 def _pdf_draw_schaden(pdf, data, schaden_items):
     dmg = data["condition_data"].get("damage_records", [])
@@ -676,56 +747,19 @@ def _pdf_draw_schaden(pdf, data, schaden_items):
                 s_col = 0
                 s_y += max(dh, S_MAX_H) + 10
 
-
-def _pdf_draw_transfer_signatures(pdf, data, sig_bytes, sig_receiver_bytes):
-    if pdf.get_y() > 220:
-        pdf.add_page()
-    pdf.ln(10)
-    footer_y = pdf.get_y()
-    BW = PDF_TRANS_BOX_W; LX = PDF_TRANS_LEFT_X; RX = PDF_TRANS_RIGHT_X
-
-    pdf.set_font("helvetica", "B", 9)
-    pdf.set_xy(LX, footer_y); pdf.cell(BW, 6, _u("Übergabe durch (Ersteller)"),  border="TB", ln=False, align="C")
-    pdf.set_xy(RX, footer_y); pdf.cell(BW, 6, _u("Übernahme durch (Empfänger)"), border="TB", ln=False, align="C")
-    pdf.ln(6)
-
-    name_y = pdf.get_y()
-    pdf.set_font("helvetica", "", 9)
-    pdf.set_xy(LX, name_y); pdf.cell(BW, 6, _u(f"Name: {data.get('inspector_name','')}") , ln=False)
-    pdf.set_xy(RX, name_y); pdf.cell(BW, 6, _u(f"Name: {data.get('receiver_name','')}") ,  ln=False)
-    pdf.ln(6)
-    sig_y = pdf.get_y()
-
-    for sig, x in [(sig_bytes, LX), (sig_receiver_bytes, RX)]:
-        if sig:
-            try:
-                sp = _prepare_image_bytes(sig)
-                dw, _ = _get_photo_display_size(sp, PDF_TRANS_SIG_W, PDF_TRANS_SIG_H)
-                pdf.image(io.BytesIO(sp), x=x + (BW - dw) / 2, y=sig_y, w=dw)
-            except Exception:
-                pass
-        else:
-            pdf.set_draw_color(180, 180, 180)
-            pdf.set_xy(x + 5, sig_y + 12); pdf.cell(BW - 10, 0, "", border="B")
-            pdf.set_draw_color(0, 0, 0)
-
-    ts_y = sig_y + PDF_TRANS_SIG_H + 2
-    pdf.set_font("helvetica", "", 8)
-    pdf.set_xy(LX, ts_y); pdf.cell(BW, 5, f"Datum: {data['created_at'][:16].replace('T',' ')}", align="C")
-    pdf.set_xy(RX, ts_y)
-    recv_ts = data["condition_data"].get("receiver_signed_at", "")
-    recv_str = recv_ts[:16].replace("T", " ") if recv_ts else "___________"
-    pdf.cell(BW, 5, f"Datum: {recv_str}", align="C")
-
-
 def create_pdf(data: dict, is_transfer: bool = False, status: str = "final") -> bytes:
-    """Erstellt das vollstaendige Protokoll-PDF und gibt es als Bytes zurueck."""
     pdf = UnicodePDF()
     pdf.add_page()
     photos = data["condition_data"].get("photos", {})
 
-    sig_bytes          = _fetch_image_bytes(photos["signature"])          if photos.get("signature")          else None
-    sig_receiver_bytes = _fetch_image_bytes(photos["signature_receiver"]) if is_transfer and photos.get("signature_receiver") else None
+    sig_bytes = (
+        _fetch_image_bytes(photos["signature"])
+        if photos.get("signature") else None
+    )
+    sig_receiver_bytes = (
+        _fetch_image_bytes(photos["signature_receiver"])
+        if is_transfer and photos.get("signature_receiver") else None
+    )
 
     _pdf_draw_title_and_std_signature(pdf, data, is_transfer, sig_bytes)
     _pdf_draw_basisdaten(pdf, data, is_transfer)
@@ -733,17 +767,20 @@ def create_pdf(data: dict, is_transfer: bool = False, status: str = "final") -> 
     _pdf_draw_checkliste(pdf, data)
     _pdf_draw_bemerkungen(pdf, data)
 
+    if is_transfer:
+        _pdf_draw_transfer_signatures(pdf, data, sig_bytes, sig_receiver_bytes)
+
     RUNDUMBLICK    = ["vorne", "hinten", "links", "rechts", "schein"]
     schaden_labels = [lbl for lbl in photos if lbl.startswith("schaden") and photos[lbl]]
-    all_items      = [(lbl, photos[lbl]) for lbl in RUNDUMBLICK if photos.get(lbl)] + [(lbl, photos[lbl]) for lbl in schaden_labels]
-    fetched_map    = dict(_fetch_photos_parallel(all_items)) if all_items else {}
-    schaden_items  = [(lbl, photos[lbl]) for lbl in schaden_labels]
+    all_items      = (
+        [(lbl, photos[lbl]) for lbl in RUNDUMBLICK    if photos.get(lbl)]
+        + [(lbl, photos[lbl]) for lbl in schaden_labels]
+    )
+    fetched_map   = dict(_fetch_photos_parallel(all_items)) if all_items else {}
+    schaden_items = [(lbl, photos[lbl]) for lbl in schaden_labels]
 
     _pdf_draw_fotos(pdf, fetched_map)
     _pdf_draw_schaden(pdf, data, schaden_items)
-
-    if is_transfer:
-        _pdf_draw_transfer_signatures(pdf, data, sig_bytes, sig_receiver_bytes)
 
     if status == "draft":
         total_pages = pdf.pages
@@ -756,7 +793,7 @@ def create_pdf(data: dict, is_transfer: bool = False, status: str = "final") -> 
 
 
 # ---------------------------------------------------------------------------
-# 5. TAB 1: PROTOKOLL ERSTELLEN / BEARBEITEN
+# 6. TAB 1: PROTOKOLL ERSTELLEN / BEARBEITEN
 # ---------------------------------------------------------------------------
 
 if active_tab == "📝 Protokoll erstellen / Bearbeiten":
@@ -791,7 +828,7 @@ if active_tab == "📝 Protokoll erstellen / Bearbeiten":
         hersteller = st.text_input("Modell", value=h_val)
         s_val      = st.session_state.edit_data["location"] if is_edit else ""
         standort   = st.text_input("Standort", value=s_val)
-        st.text_input("Datum", value=datetime.datetime.now().strftime("%d.%m.%Y %H:%M"), disabled=True)
+        st.text_input("Datum", value=datetime.datetime.now(ZoneInfo("Europe/Berlin")).strftime("%d.%m.%Y %H:%M"), disabled=True)
 
     st.header("2. Sichtprüfung & Schadenserfassung")
     erschwert_val = st.session_state.edit_data["condition_data"].get("conditions", []) if is_edit else []
@@ -800,7 +837,6 @@ if active_tab == "📝 Protokoll erstellen / Bearbeiten":
         default=erschwert_val,
     )
 
-    # OPT #4 - geteilte Komponenten
     f_v, f_h, f_l, f_r, f_s = render_photo_upload_section("t1")
 
     old_dmgs = st.session_state.edit_data["condition_data"].get("damage_records", []) if is_edit else []
@@ -823,8 +859,8 @@ if active_tab == "📝 Protokoll erstellen / Bearbeiten":
     canvas_result = st_canvas(
         fill_color="rgba(255, 165, 0, 0.3)", stroke_width=3,
         stroke_color="#000000", background_color="#eeeeee",
-        height=150, 
-        width=350,  # <--- DAS FEHLTE
+        height=150,
+        width=350,
         key="canvas",
     )
     confirm = st.checkbox("Ich bestätige die Richtigkeit der Angaben")
@@ -838,10 +874,9 @@ if active_tab == "📝 Protokoll erstellen / Bearbeiten":
                 v_id = upsert_vehicle(p_id, kennzeichen, hersteller, vin)
                 path = f"{p_name}/{kennzeichen}"
                 final_urls: dict = (
-                    st.session_state.edit_data["condition_data"].get("photos", {})
+                    st.session_state.edit_data["condition_data"].get("photos", {}).copy()
                     if is_edit else {}
                 )
-                # OPT #3 - Pflichtfotos parallel
                 new_required = upload_required_photos_parallel(
                     {"vorne": f_v, "hinten": f_h, "links": f_l, "rechts": f_r, "schein": f_s}, path
                 )
@@ -849,7 +884,7 @@ if active_tab == "📝 Protokoll erstellen / Bearbeiten":
                 final_urls.update(upload_all_photos(d_files, path))
 
                 img_data = canvas_result.image_data
-                if img_data is not None and img_data[:, :, 3].max() > 0:
+                if img_data is not None and _canvas_has_stroke(img_data):
                     im = Image.fromarray(img_data.astype("uint8"), "RGBA")
                     sig_url = upload_photo(im, path, "sign", is_pil=True)
                     if sig_url:
@@ -873,9 +908,8 @@ if active_tab == "📝 Protokoll erstellen / Bearbeiten":
             except Exception as e:
                 st.error(f"Unerwarteter Fehler: {e}")
 
-
 # ---------------------------------------------------------------------------
-# 6. TAB 2: ARCHIV & VERWALTUNG
+# 7. TAB 2: ARCHIV & VERWALTUNG
 # ---------------------------------------------------------------------------
 
 elif active_tab == "🔍 Archiv & Verwaltung":
@@ -890,8 +924,7 @@ elif active_tab == "🔍 Archiv & Verwaltung":
     with filter_col2:
         filter_status = st.multiselect("Status", ["final", "draft"], default=["final", "draft"])
 
-    # OPT #1+#2 - gecachte Query mit serverseitigem Filter
-    results = get_protocols(tuple(filter_status))
+    results = get_protocols(tuple(filter_status), search_q)
 
     for r in results:
         plate    = r["vehicles"]["license_plate"]
@@ -900,14 +933,13 @@ elif active_tab == "🔍 Archiv & Verwaltung":
 
         if search_q and search_q not in plate:
             continue
-        if filter_type == "Nur Standard"        and r_type == "transfer":
+        if filter_type == "Nur Standard"      and r_type == "transfer":
             continue
         if filter_type == "Nur Überführungen" and r_type != "transfer":
             continue
 
         confirm_key       = f"del_confirm_{r['id']}"
         is_transfer_entry = r_type == "transfer"
-        icon  = "Auto" if is_transfer_entry else "Dokument"
         badge = " ⚠️ ENTWURF" if r_status == "draft" else ""
 
         with st.expander(f"📄 {r['created_at'][:10]} | {plate} | {r['vehicles']['brand_model']}{badge}"):
@@ -949,34 +981,25 @@ elif active_tab == "🔍 Archiv & Verwaltung":
 
             st.write("---")
 
-            if r_status == "draft" and is_transfer_entry:
-                col_btn1, col_btn2, col_btn3, col_btn4 = st.columns(4)
-            else:
-                col_btn1, col_btn2, col_btn3 = st.columns(3)
-                col_btn4 = None
+            col_btn1, col_btn2, col_btn3 = st.columns(3)
 
             with col_btn1:
-                if st.button("Bearbeiten", key=f"ed_{r['id']}"):
-                    st.session_state.edit_id   = r["id"]
-                    st.session_state.edit_data = r
+                if st.button("✏️ Bearbeiten", key=f"ed_{r['id']}"):
+                    if is_transfer_entry:
+                        st.session_state.transfer_prefill  = r
+                        st.session_state.transfer_edit_id = r["id"]
+                        st.session_state.nav_redirect = "🚙 Fahrzeug-Überführung"
+                    else:
+                        st.session_state.edit_id   = r["id"]
+                        st.session_state.edit_data = r
+                        st.session_state.nav_redirect = "📝 Protokoll erstellen / Bearbeiten"
                     st.rerun()
 
-            # OPT #10 - PDF im Session-State speichern -> ein Klick reicht
             with col_btn2:
                 pdf_key = f"pdf_bytes_{r['id']}"
                 if st.button("📄 PDF generieren", key=f"prep_{r['id']}"):
                     with st.spinner("PDF wird generiert..."):
                         st.session_state[pdf_key] = create_pdf(r, is_transfer=is_transfer_entry, status=r_status)
-                if st.session_state.get(pdf_key):
-                    fname = f"{'Überführung' if is_transfer_entry else 'Protokoll'}_{plate}.pdf"
-                    st.download_button(
-                        "⬇️ PDF herunterladen",
-                        data=st.session_state[pdf_key],
-                        file_name=fname,
-                        mime="application/pdf",
-                        key=f"dl_{r['id']}",
-                    )
-                    
 
             with col_btn3:
                 if st.session_state.get(confirm_key, False):
@@ -984,26 +1007,31 @@ elif active_tab == "🔍 Archiv & Verwaltung":
                         try:
                             supabase.table("protocols").delete().eq("id", r["id"]).execute()
                             del st.session_state[confirm_key]
-                            get_protocols.clear()   # OPT #1 - Cache invalidieren
+                            get_protocols.clear()
                             st.rerun()
                         except Exception as e:
                             st.error(f"Fehler beim Löschen: {e}")
                     if st.button("Abbrechen", key=f"n_{r['id']}"):
                         del st.session_state[confirm_key]; st.rerun()
                 else:
-                    if st.button("Löschen", key=f"d_{r['id']}"):
+                    if st.button("🗑️ Löschen", key=f"d_{r['id']}"):
                         st.session_state[confirm_key] = True; st.rerun()
 
-            if col_btn4 is not None:
-                with col_btn4:
-                    if st.button("Jetzt abschliessen", key=f"fin_{r['id']}", type="primary"):
-                        st.session_state.transfer_prefill  = r
-                        st.session_state.transfer_edit_id = r["id"]
-                        st.info("Bitte wechsle zu Tab Fahrzeug-Überführung.")
-
+        # Download-Button AUSSERHALB des Expanders
+        pdf_key = f"pdf_bytes_{r['id']}"
+        if st.session_state.get(pdf_key):
+            fname = sanitize_filename(f"{'Ueberfuehrung' if is_transfer_entry else 'Protokoll'}_{plate}") + ".pdf"
+            st.download_button(
+                f"⬇️ PDF herunterladen: {plate}",
+                data=st.session_state[pdf_key],
+                file_name=fname,
+                mime="application/pdf",
+                key=f"dl_{r['id']}",
+                use_container_width=True,
+            )
 
 # ---------------------------------------------------------------------------
-# 7. TAB 3: FAHRZEUG-ÜBERFÜHRUNG
+# 8. TAB 3: FAHRZEUG-ÜBERFÜHRUNG
 # ---------------------------------------------------------------------------
 
 elif active_tab == "🚙 Fahrzeug-Überführung":
@@ -1037,12 +1065,12 @@ elif active_tab == "🚙 Fahrzeug-Überführung":
         kennzeichen_t3   = st.text_input("Kennzeichen", value=prefill["vehicles"]["license_plate"] if is_t3_edit else "", key="t3_kz").upper()
         vin_t3           = st.text_input("VIN",         value=prefill["vehicles"]["vin"]           if is_t3_edit else "", key="t3_vin")
         fahrer_t3        = st.text_input("Ersteller",   value=prefill["inspector_name"]            if is_t3_edit else "", key="t3_fahrer")
-        receiver_name_t3 = st.text_input("Empfänger Name", value=prefill.get("receiver_name","") if is_t3_edit else "", key="t3_receiver")
+        receiver_name_t3 = st.text_input("Empfänger Name", value=prefill.get("receiver_name","")  if is_t3_edit else "", key="t3_receiver")
     with col_t3b:
         hersteller_t3 = st.text_input("Modell",        value=prefill["vehicles"]["brand_model"]   if is_t3_edit else "", key="t3_modell")
         von_t3        = st.text_input("Von (Startort)", value=prefill.get("start_location","")     if is_t3_edit else "", key="t3_von")
         nach_t3       = st.text_input("Nach (Zielort)", value=prefill.get("end_location","")       if is_t3_edit else "", key="t3_nach")
-        st.text_input("Datum", value=datetime.datetime.now().strftime("%d.%m.%Y %H:%M"), disabled=True, key="t3_datum")
+        st.text_input("Datum", value=datetime.datetime.now(ZoneInfo("Europe/Berlin")).strftime("%d.%m.%Y %H:%M"), disabled=True, key="t3_datum")
 
     st.header("2. Sichtprüfung & Schadenserfassung")
     pf_cond = pf_cd.get("conditions", []) if is_t3_edit else []
@@ -1051,7 +1079,6 @@ elif active_tab == "🚙 Fahrzeug-Überführung":
         default=pf_cond, key="t3_bed",
     )
 
-    # OPT #4 - geteilte Komponenten
     t3_fv, t3_fh, t3_fl, t3_fr, t3_fs = render_photo_upload_section("t3")
 
     old_t3_dmgs = pf_cd.get("damage_records", []) if is_t3_edit else []
@@ -1063,12 +1090,11 @@ elif active_tab == "🚙 Fahrzeug-Überführung":
 
     st.header("4. Füllstände")
     t3_fuel    = st.slider("Kraftstoff %", 0, 100, int(prefill.get("fuel_level") or 100) if is_t3_edit else 100, key="t3_fuel")
-    t3_battery = st.slider("Batterie %",   0, 100, int(pf_cd.get("battery") or 100)      if is_t3_edit else 100, key="t3_batt")
+    t3_battery = st.slider("Batterie %",   0, 100, int(pf_cd.get("battery") or 100)       if is_t3_edit else 100, key="t3_batt")
     t3_km      = st.number_input("Kilometer", min_value=0, max_value=2_000_000,
                                  value=int(prefill.get("odometer") or 0) if is_t3_edit else 0, key="t3_km")
     t3_bem     = st.text_area("Bemerkungen", value=prefill.get("remarks") or "" if is_t3_edit else "", key="t3_bem")
 
-    
     st.header("5. Unterschriften")
     st.caption("Die Ersteller-Unterschrift reicht zum Zwischenspeichern. Beim Finalisieren werden beide benötigt.")
 
@@ -1093,16 +1119,16 @@ elif active_tab == "🚙 Fahrzeug-Überführung":
             key="canvas_t3_receiver",
         )
     confirm_t3 = st.checkbox("Ich bestätige die Richtigkeit der Angaben", key="t3_confirm")
-    
+
     btn_col1, btn_col2 = st.columns(2)
 
     def _t3_creator_signed() -> bool:
         img = canvas_t3_creator.image_data
-        return img is not None and img[:, :, 3].max() > 0
+        return _canvas_has_stroke(img)
 
     def _t3_receiver_signed() -> bool:
         img = canvas_t3_receiver.image_data
-        return img is not None and img[:, :, 3].max() > 0
+        return _canvas_has_stroke(img)
 
     def _save_transfer(status_val: str):
         if not validate_inputs(kennzeichen_t3, p_name_t3, confirm_t3, t3_km):
@@ -1111,7 +1137,8 @@ elif active_tab == "🚙 Fahrzeug-Überführung":
             st.error("Bitte Startort (Von) eingeben."); st.stop()
         if not nach_t3.strip():
             st.error("Bitte Zielort (Nach) eingeben."); st.stop()
-        if status_val == "final" and not _t3_receiver_signed():
+        existing_sig_receiver = pf_cd.get("photos", {}).get("signature_receiver") if is_t3_edit else None
+        if status_val == "final" and not _t3_receiver_signed() and not existing_sig_receiver:
             st.error("Für das Finalisieren wird die Empfänger-Unterschrift benötigt."); st.stop()
 
         with st.spinner("Speichere..."):
@@ -1120,9 +1147,8 @@ elif active_tab == "🚙 Fahrzeug-Überführung":
                 v_id_t3 = upsert_vehicle(p_id_t3, kennzeichen_t3, hersteller_t3, vin_t3)
                 path_t3 = f"{p_name_t3}/{kennzeichen_t3}"
 
-                final_urls_t3: dict = pf_cd.get("photos", {}) if is_t3_edit else {}
+                final_urls_t3: dict = pf_cd.get("photos", {}).copy() if is_t3_edit else {}
 
-                # OPT #3 - Pflichtfotos parallel
                 new_required_t3 = upload_required_photos_parallel(
                     {"vorne": t3_fv, "hinten": t3_fh, "links": t3_fl, "rechts": t3_fr, "schein": t3_fs},
                     path_t3
@@ -1133,27 +1159,29 @@ elif active_tab == "🚙 Fahrzeug-Überführung":
                 if _t3_creator_signed():
                     im_c = Image.fromarray(canvas_t3_creator.image_data.astype("uint8"), "RGBA")
                     url_c = upload_photo(im_c, path_t3, "sign", is_pil=True)
-                    if url_c: final_urls_t3["signature"] = url_c
+                    if url_c:
+                        final_urls_t3["signature"] = url_c
 
                 if _t3_receiver_signed():
                     im_r = Image.fromarray(canvas_t3_receiver.image_data.astype("uint8"), "RGBA")
                     url_r = upload_photo(im_r, path_t3, "sign_receiver", is_pil=True)
-                    if url_r: final_urls_t3["signature_receiver"] = url_r
+                    if url_r:
+                        final_urls_t3["signature_receiver"] = url_r
+
+                recv_time = datetime.datetime.now(ZoneInfo("Europe/Berlin")).isoformat() if (_t3_receiver_signed() and "signature_receiver" in final_urls_t3) else None
 
                 payload_t3 = build_payload(
                     vehicle_id=v_id_t3, inspector_name=fahrer_t3, location=von_t3,
                     odometer=t3_km, fuel_level=t3_fuel, remarks=t3_bem,
                     battery=t3_battery, photos=final_urls_t3, conditions=erschwert_t3,
                     damage_records=t3_damage_records, checkliste=t3_checkliste,
+                    receiver_signed_at=recv_time
                 )
                 payload_t3["protocol_type"]  = "transfer"
                 payload_t3["status"]         = status_val
                 payload_t3["start_location"] = von_t3
                 payload_t3["end_location"]   = nach_t3
                 payload_t3["receiver_name"]  = receiver_name_t3
-
-                if _t3_receiver_signed() and "signature_receiver" in final_urls_t3:
-                    payload_t3["condition_data"]["receiver_signed_at"] = datetime.datetime.now().isoformat()
 
                 if save_protocol(payload_t3, edit_id=t3_edit_id):
                     st.session_state.transfer_prefill = None
