@@ -1,8 +1,0 @@
-streamlit
-supabase
-streamlit-drawable-canvas
-Pillow
-requests
-numpy
-fpdf2
-tzdata
