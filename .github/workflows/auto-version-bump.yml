@@ -1,0 +1,107 @@
+name: Auto Version Bump
+
+on:
+  pull_request:
+    types: [closed]
+    branches: [main, master]
+
+jobs:
+  version-bump:
+    if: github.event.pull_request.merged == true && contains(github.event.pull_request.head.ref, 'claude/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Read current version
+        id: version
+        run: |
+          VERSION=$(jq -r '.version' package.json)
+          echo "current_version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Current version: $VERSION"
+
+      - name: Bump patch version
+        id: bump
+        run: |
+          CURRENT=${{ steps.version.outputs.current_version }}
+          # Parse version: major.minor.patch
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
+          PATCH=$((PATCH + 1))
+          NEW_VERSION="$MAJOR.$MINOR.$PATCH"
+          echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
+          echo "New version: $NEW_VERSION"
+
+      - name: Update package.json
+        run: |
+          jq '.version = "${{ steps.bump.outputs.new_version }}"' package.json > package.json.tmp
+          mv package.json.tmp package.json
+          echo "Updated package.json"
+
+      - name: Update src/constants/index.ts (if exists)
+        run: |
+          if [ -f "src/constants/index.ts" ]; then
+            sed -i "s/export const APP_VERSION = '[^']*'/export const APP_VERSION = '${{ steps.bump.outputs.new_version }}'/" src/constants/index.ts
+            echo "Updated src/constants/index.ts"
+          else
+            echo "src/constants/index.ts not found (optional)"
+          fi
+
+      - name: Commit version bump
+        run: |
+          git config --local user.email "claude@anthropic.com"
+          git config --local user.name "Claude"
+          git add package.json src/constants/index.ts 2>/dev/null || true
+          git commit -m "Automated version bump: ${{ steps.version.outputs.current_version }} → ${{ steps.bump.outputs.new_version }}
+
+After Claude Code fix in PR #${{ github.event.pull_request.number }}
+Co-Authored-By: Claude Haiku 4.5 <noreply@anthropic.com>" || echo "No changes to commit"
+
+      - name: Push version bump
+        run: |
+          git push origin HEAD:${{ github.event.pull_request.base.ref }}
+
+      - name: Comment on PR
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: '✅ **Version Auto-Bump Complete**\n\n' +
+                    '- Old: `${{ steps.version.outputs.current_version }}`\n' +
+                    '- New: `${{ steps.bump.outputs.new_version }}`\n\n' +
+                    '📋 **Next Step:** Manual deploy approval required\n\n' +
+                    '⏭️ Trigger deploy with:\n' +
+                    '```\ngh workflow run deploy.yml --ref ${{ github.event.pull_request.base.ref }}\n```'
+            })
+
+  manual-deploy-gate:
+    if: github.event.pull_request.merged == true && contains(github.event.pull_request.head.ref, 'claude/')
+    runs-on: ubuntu-latest
+    needs: version-bump
+    permissions:
+      contents: read
+
+    steps:
+      - name: 🚧 Waiting for manual deploy approval
+        run: |
+          echo "Version bump complete!"
+          echo ""
+          echo "⏸️  Manual Deploy Gate Activated"
+          echo "Deploy requires explicit approval via:"
+          echo "  1. GitHub Actions workflow_dispatch"
+          echo "  2. Or run: gh workflow run deploy.yml"
+          echo ""
+          echo "Repository owner will be notified of pending deployment."
